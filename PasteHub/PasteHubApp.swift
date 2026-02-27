@@ -1,32 +1,23 @@
-//
-//  PasteHubApp.swift
-//  PasteHub
-//
-//  Created by 机丸 on 2026/2/22.
-//
-
 import SwiftUI
-import SwiftData
 
 @main
 struct PasteHubApp: App {
-    var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            Item.self,
-        ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
-
-        do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
-        } catch {
-            fatalError("Could not create ModelContainer: \(error)")
-        }
-    }()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        WindowGroup {
-            ContentView()
+        MenuBarExtra("PasteHub", systemImage: "list.clipboard") {
+            Button("显示 / 隐藏面板") {
+                appDelegate.togglePanel()
+            }
+            .keyboardShortcut("v", modifiers: [.command, .shift])
+            Divider()
+            Button("清空记录") {
+                appDelegate.store.clearAll()
+            }
+            Divider()
+            Button("退出 PasteHub") {
+                NSApp.terminate(nil)
+            }
         }
-        .modelContainer(sharedModelContainer)
     }
 }
