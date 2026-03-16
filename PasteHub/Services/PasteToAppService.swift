@@ -3,11 +3,16 @@ import ApplicationServices
 
 @MainActor
 final class PasteToAppService {
+    static let accessibilityPromptedKey = "accessibilityPromptedOnce"
+
+    nonisolated static func resetAccessibilityPromptCache() {
+        UserDefaults.standard.removeObject(forKey: accessibilityPromptedKey)
+    }
+
     private var targetBundleIdentifier: String?
     private var targetProcessIdentifier: pid_t?
     private let maxSearchDepth = 7
     private let maxChildrenPerNode = 80
-    private let accessibilityPromptedKey = "accessibilityPromptedOnce"
     private let searchFieldRole = "AXSearchField"
     private let editableAttribute = "AXEditable"
 
@@ -67,12 +72,12 @@ final class PasteToAppService {
             return true
         }
 
-        if !UserDefaults.standard.bool(forKey: accessibilityPromptedKey) {
+        if !UserDefaults.standard.bool(forKey: Self.accessibilityPromptedKey) {
             let options = [
                 kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true
             ] as CFDictionary
             _ = AXIsProcessTrustedWithOptions(options)
-            UserDefaults.standard.set(true, forKey: accessibilityPromptedKey)
+            UserDefaults.standard.set(true, forKey: Self.accessibilityPromptedKey)
         }
         return false
     }

@@ -84,6 +84,7 @@ struct ClipboardListView: View {
     private let horizontalCardHeight: CGFloat = 170
     private let horizontalSnippetWidth: CGFloat = 300
     private let horizontalSnippetHeight: CGFloat = 170
+    private let horizontalScrollerGap: CGFloat = 8
     private let panelCornerRadius: CGFloat = 18
 
     private var minPanelHeight: CGFloat {
@@ -362,7 +363,7 @@ struct ClipboardListView: View {
     }
 
     private var horizontalWaterfallContent: some View {
-        ScrollView(.horizontal) {
+        HorizontalWheelScrollView(indicatorBottomInset: horizontalScrollerGap) {
             LazyHStack(alignment: .top, spacing: 8) {
                 ForEach(filteredItems) { item in
                     ClipboardCard(
@@ -380,7 +381,7 @@ struct ClipboardListView: View {
             }
             .padding(.vertical, 2)
         }
-        .frame(maxHeight: horizontalCardHeight + 6)
+        .frame(maxHeight: horizontalCardHeight + horizontalScrollerGap + 8)
     }
 
     private var verticalSnippetContent: some View {
@@ -401,7 +402,7 @@ struct ClipboardListView: View {
     }
 
     private var horizontalSnippetContent: some View {
-        ScrollView(.horizontal) {
+        HorizontalWheelScrollView(indicatorBottomInset: horizontalScrollerGap) {
             LazyHStack(alignment: .top, spacing: 8) {
                 ForEach(filteredSnippets) { snippet in
                     SnippetCard(
@@ -418,7 +419,7 @@ struct ClipboardListView: View {
             }
             .padding(.vertical, 2)
         }
-        .frame(maxHeight: horizontalSnippetHeight + 6)
+        .frame(maxHeight: horizontalSnippetHeight + horizontalScrollerGap + 8)
     }
 
     private func waterfallColumns(from items: [ClipboardItem]) -> [[ClipboardItem]] {
@@ -622,6 +623,121 @@ struct ClipboardListView: View {
         .buttonStyle(.bordered)
         .controlSize(.small)
         .help("打开设置")
+    }
+}
+
+private struct HorizontalWheelScrollView<Content: View>: NSViewRepresentable {
+    let indicatorBottomInset: CGFloat
+    let content: Content
+
+    init(
+        indicatorBottomInset: CGFloat = 0,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.indicatorBottomInset = indicatorBottomInset
+        self.content = content()
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(rootView: content)
+    }
+
+    func makeNSView(context: Context) -> WheelEnabledHorizontalScrollView {
+        let scrollView = WheelEnabledHorizontalScrollView()
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+        scrollView.hasHorizontalScroller = true
+        scrollView.hasVerticalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.scrollerStyle = .overlay
+        scrollView.horizontalScrollElasticity = .allowed
+        scrollView.verticalScrollElasticity = .none
+        scrollView.automaticallyAdjustsContentInsets = false
+        scrollView.contentInsets = NSEdgeInsets(
+            top: 0,
+            left: 0,
+            bottom: indicatorBottomInset,
+            right: 0
+        )
+
+        let hostingView = context.coordinator.hostingView
+        scrollView.documentView = hostingView
+        scrollView.onLayout = { [weak scrollView, weak hostingView] in
+            guard let scrollView, let hostingView else { return }
+            Self.syncDocumentFrame(scrollView: scrollView, hostingView: hostingView)
+        }
+        Self.syncDocumentFrame(scrollView: scrollView, hostingView: hostingView)
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: WheelEnabledHorizontalScrollView, context: Context) {
+        let hostingView = context.coordinator.hostingView
+        hostingView.rootView = content
+        scrollView.contentInsets = NSEdgeInsets(
+            top: 0,
+            left: 0,
+            bottom: indicatorBottomInset,
+            right: 0
+        )
+        Self.syncDocumentFrame(scrollView: scrollView, hostingView: hostingView)
+    }
+
+    private static func syncDocumentFrame(
+        scrollView: NSScrollView,
+        hostingView: NSHostingView<Content>
+    ) {
+        let fit = hostingView.fittingSize
+        let clipBounds = scrollView.contentView.bounds
+        let targetSize = NSSize(
+            width: max(fit.width, clipBounds.width),
+            height: max(fit.height, clipBounds.height)
+        )
+        if hostingView.frame.size != targetSize {
+            hostingView.frame = NSRect(origin: .zero, size: targetSize)
+        }
+    }
+
+    final class Coordinator {
+        let hostingView: NSHostingView<Content>
+
+        init(rootView: Content) {
+            hostingView = NSHostingView(rootView: rootView)
+        }
+    }
+}
+
+private final class WheelEnabledHorizontalScrollView: NSScrollView {
+    var onLayout: (() -> Void)?
+
+    override func layout() {
+        super.layout()
+        onLayout?()
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        let horizontalDelta = abs(event.scrollingDeltaX)
+        let verticalDelta = abs(event.scrollingDeltaY)
+
+        if horizontalDelta < 0.1, verticalDelta > 0.1 {
+            guard let documentView else {
+                super.scrollWheel(with: event)
+                return
+            }
+            let maxOffsetX = max(documentView.frame.width - contentView.bounds.width, 0)
+            guard maxOffsetX > 0 else {
+                super.scrollWheel(with: event)
+                return
+            }
+
+            let multiplier: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 16
+            let delta = event.scrollingDeltaY * multiplier
+            let targetOffsetX = min(max(contentView.bounds.origin.x - delta, 0), maxOffsetX)
+            contentView.scroll(to: NSPoint(x: targetOffsetX, y: 0))
+            reflectScrolledClipView(contentView)
+            return
+        }
+
+        super.scrollWheel(with: event)
     }
 }
 

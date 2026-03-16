@@ -45,6 +45,19 @@ final class FloatingPanel: NSPanel, NSWindowDelegate {
         isPresented = false
     }
 
+    func windowDidResignKey(_ notification: Notification) {
+        guard isPresented, isVisible else { return }
+        guard attachedSheet == nil, sheets.isEmpty else { return }
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            guard self.isPresented, self.isVisible else { return }
+            guard self.attachedSheet == nil, self.sheets.isEmpty else { return }
+            guard !NSApp.isActive else { return }
+            self.hide()
+        }
+    }
+
     func toggle() {
         if shouldHideOnToggle {
             hide()
@@ -83,7 +96,6 @@ final class FloatingPanel: NSPanel, NSWindowDelegate {
 
         animate(to: frames.shown, duration: 0.18) { [weak self] in
             guard let self else { return }
-            self.level = .normal
             self.makeKeyAndOrderFront(nil)
         }
     }
@@ -96,6 +108,7 @@ final class FloatingPanel: NSPanel, NSWindowDelegate {
             return
         }
         let frames = placementFrames(for: settings.panelEdge, on: screen)
+        level = .floating
         animate(to: frames.hidden, duration: 0.14) { [weak self] in
             guard let self else { return }
             self.level = .normal

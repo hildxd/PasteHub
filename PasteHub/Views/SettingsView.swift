@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import ApplicationServices
 
 struct SettingsView: View {
     var settings: SettingsManager
@@ -52,6 +53,24 @@ private struct GeneralTab: View {
 
 private struct HotkeyTab: View {
     var settings: SettingsManager
+    @State private var isAccessibilityTrusted = AXIsProcessTrusted()
+    @State private var lastCheckedAt = Date()
+
+    private var executablePath: String {
+        Bundle.main.executableURL?.path ?? "未知"
+    }
+
+    private var bundlePath: String {
+        Bundle.main.bundleURL.path
+    }
+
+    private var bundleID: String {
+        Bundle.main.bundleIdentifier ?? "未知"
+    }
+
+    private var processID: String {
+        String(ProcessInfo.processInfo.processIdentifier)
+    }
 
     var body: some View {
         Form {
@@ -80,9 +99,104 @@ private struct HotkeyTab: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
+            Section("键入权限诊断") {
+                HStack {
+                    Text("辅助功能权限")
+                    Spacer()
+                    Text(isAccessibilityTrusted ? "已授权" : "未授权")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(isAccessibilityTrusted ? .green : .red)
+                }
+
+                HStack {
+                    Text("Bundle ID")
+                    Spacer()
+                    Text(bundleID)
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+
+                HStack {
+                    Text("进程 PID")
+                    Spacer()
+                    Text(processID)
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("当前可执行路径")
+                    Text(executablePath)
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("当前 Bundle 路径")
+                    Text(bundlePath)
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                HStack {
+                    Text("上次检测")
+                    Spacer()
+                    Text(Self.timeFormatter.string(from: lastCheckedAt))
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack(spacing: 10) {
+                    Button("刷新状态") {
+                        refreshAccessibilityState()
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button("打开辅助功能设置") {
+                        openAccessibilitySettings()
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button("重置提示缓存") {
+                        UserDefaults.standard.removeObject(forKey: PasteToAppService.accessibilityPromptedKey)
+                    }
+                    .buttonStyle(.bordered)
+                }
+
+                Text("若路径与你在系统“辅助功能”里勾选的 PasteHub 不一致，会导致一直提示未授权。")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
+        .onAppear {
+            refreshAccessibilityState()
+        }
     }
+
+    private func refreshAccessibilityState() {
+        isAccessibilityTrusted = AXIsProcessTrusted()
+        lastCheckedAt = Date()
+    }
+
+    private func openAccessibilitySettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = .current
+        formatter.dateStyle = .none
+        formatter.timeStyle = .medium
+        return formatter
+    }()
 }
 
 private struct ShortcutRow: View {
