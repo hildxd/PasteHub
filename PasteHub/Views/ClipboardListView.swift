@@ -51,6 +51,7 @@ struct ClipboardListView: View {
     @State private var tagEditorItem: ClipboardItem?
     @State private var isSnippetEditorPresented = false
     @State private var editingSnippet: SnippetItem?
+    @State private var tokenSelectionItem: ClipboardItem?
 
     init(
         store: ClipboardStore,
@@ -160,6 +161,22 @@ struct ClipboardListView: View {
                     saveSnippet(title: title, content: content, tags: tags)
                     editingSnippet = nil
                     isSnippetEditorPresented = false
+                }
+            )
+        }
+        .sheet(item: $tokenSelectionItem) { item in
+            TokenSelectionSheet(
+                sourceText: item.content,
+                onSubmit: { selectedText in
+                    activateClipboardItem(
+                        ClipboardItem(
+                            type: .text,
+                            content: selectedText,
+                            sourceApp: item.sourceApp,
+                            sourceBundleIdentifier: item.sourceBundleIdentifier,
+                            tags: item.tags
+                        )
+                    )
                 }
             )
         }
@@ -352,7 +369,8 @@ struct ClipboardListView: View {
                                 onCopy: { store.copyToClipboard(item) },
                                 onDelete: { store.remove(item) },
                                 onManageTags: { tagEditorItem = item },
-                                onSaveAsSnippet: { quickSaveAsSnippet(item) }
+                                onSaveAsSnippet: { quickSaveAsSnippet(item) },
+                                onTokenSelect: { tokenSelectionItem = item }
                             )
                         }
                     }
@@ -373,6 +391,7 @@ struct ClipboardListView: View {
                         onDelete: { store.remove(item) },
                         onManageTags: { tagEditorItem = item },
                         onSaveAsSnippet: { quickSaveAsSnippet(item) },
+                        onTokenSelect: { tokenSelectionItem = item },
                         preferredWidth: horizontalCardWidth,
                         preferredHeight: horizontalCardHeight,
                         compactStyle: true
@@ -795,6 +814,7 @@ private struct ClipboardCard: View {
     let onDelete: () -> Void
     let onManageTags: () -> Void
     let onSaveAsSnippet: () -> Void
+    let onTokenSelect: () -> Void
     let preferredWidth: CGFloat?
     let preferredHeight: CGFloat?
     let compactStyle: Bool
@@ -808,6 +828,7 @@ private struct ClipboardCard: View {
         onDelete: @escaping () -> Void,
         onManageTags: @escaping () -> Void,
         onSaveAsSnippet: @escaping () -> Void,
+        onTokenSelect: @escaping () -> Void,
         preferredWidth: CGFloat? = nil,
         preferredHeight: CGFloat? = nil,
         compactStyle: Bool = false
@@ -818,6 +839,7 @@ private struct ClipboardCard: View {
         self.onDelete = onDelete
         self.onManageTags = onManageTags
         self.onSaveAsSnippet = onSaveAsSnippet
+        self.onTokenSelect = onTokenSelect
         self.preferredWidth = preferredWidth
         self.preferredHeight = preferredHeight
         self.compactStyle = compactStyle
@@ -976,6 +998,7 @@ private struct ClipboardCard: View {
             Button("重新复制", action: onCopy)
             Button("编辑标签", action: onManageTags)
             if item.type == .text {
+                Button("分词选择", action: onTokenSelect)
                 Button("添加到常用片段", action: onSaveAsSnippet)
             }
             Divider()
@@ -1246,6 +1269,221 @@ private struct SnippetEditorSheet: View {
         }
         .padding(16)
         .frame(width: 420)
+    }
+}
+
+private struct TokenSelectionSheet: View {
+    let onSubmit: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    private let characters: [Character]
+    private let tokenCellSize: CGFloat = 28
+    private let tokenCellSpacing: CGFloat = 6
+    @State private var selectedIndices: Set<Int> = []
+    @State private var rangeAnchorIndex: Int?
+
+    init(sourceText: String, onSubmit: @escaping (String) -> Void) {
+        self.onSubmit = onSubmit
+        self.characters = Array(sourceText)
+    }
+
+    private var selectedText: String {
+        selectedIndices
+            .sorted()
+            .map { String(characters[$0]) }
+            .joined()
+    }
+
+    private var canSubmit: Bool {
+        !selectedIndices.isEmpty
+    }
+
+    private var allIndices: Set<Int> {
+        Set(characters.indices)
+    }
+
+    private var selectionAreaHeight: CGFloat {
+        tokenCellSize * 5 + tokenCellSpacing * 4 + 8
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("分词选择")
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
+
+            Text("点选方块选择字符，按原顺序拼接后完成键入")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+
+            Text("支持 Shift + 点击做连续选择；快捷按钮会直接替换当前选择")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    Button("全选") {
+                        selectedIndices = allIndices
+                    }
+                    Button("反选") {
+                        selectedIndices = allIndices.subtracting(selectedIndices)
+                    }
+                    Button("仅数字") {
+                        selectOnly(where: isDigit)
+                    }
+                    Button("手机号段") {
+                        selectPhoneNumberLikeDigits()
+                    }
+                    Button("仅字母") {
+                        selectOnly(where: isASCIIAlpha)
+                    }
+                    Button("仅空白") {
+                        selectOnly(where: isWhitespace)
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+
+            if characters.isEmpty {
+                Text("当前文本为空")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: selectionAreaHeight)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color(nsColor: .controlBackgroundColor).opacity(0.6))
+                    )
+            } else {
+                ScrollView {
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: tokenCellSize, maximum: tokenCellSize), spacing: tokenCellSpacing)],
+                        spacing: tokenCellSpacing
+                    ) {
+                        ForEach(characters.indices, id: \.self) { index in
+                            let isSelected = selectedIndices.contains(index)
+                            Button {
+                                handleCellTap(at: index)
+                            } label: {
+                                Text(displayText(for: characters[index]))
+                                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                    .foregroundStyle(isSelected ? .white : .primary)
+                                    .frame(width: tokenCellSize, height: tokenCellSize)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                            .fill(isSelected ? Color.accentColor : Color.secondary.opacity(0.14))
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                .frame(height: selectionAreaHeight)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("已选择 \(selectedIndices.count) 个字符")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                Text(selectedText.isEmpty ? "（尚未选择）" : selectedText)
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .foregroundStyle(.primary)
+                    .lineLimit(3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color(nsColor: .controlBackgroundColor).opacity(0.6))
+                    )
+            }
+
+            HStack {
+                Spacer()
+                Button("取消") { dismiss() }
+                Button("清空选择") { selectedIndices.removeAll() }
+                    .disabled(selectedIndices.isEmpty)
+                Button("完成键入") {
+                    guard canSubmit else { return }
+                    onSubmit(selectedText)
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!canSubmit)
+            }
+        }
+        .padding(16)
+        .frame(width: 520)
+    }
+
+    private func displayText(for character: Character) -> String {
+        switch character {
+        case " ":
+            return "SP"
+        case "\n":
+            return "\\n"
+        case "\t":
+            return "\\t"
+        default:
+            return String(character)
+        }
+    }
+
+    private func handleCellTap(at index: Int) {
+        let isRangeSelection = NSEvent.modifierFlags.contains(.shift)
+        if isRangeSelection, let anchor = rangeAnchorIndex {
+            let lower = min(anchor, index)
+            let upper = max(anchor, index)
+            selectedIndices.formUnion(lower...upper)
+        } else {
+            selectedIndices.formSymmetricDifference([index])
+        }
+        rangeAnchorIndex = index
+    }
+
+    private func selectOnly(where predicate: (Character) -> Bool) {
+        selectedIndices = Set(characters.indices.filter { predicate(characters[$0]) })
+    }
+
+    private func selectPhoneNumberLikeDigits() {
+        var result = Set<Int>()
+        var runStart: Int?
+
+        for index in characters.indices {
+            if isDigit(characters[index]) {
+                if runStart == nil {
+                    runStart = index
+                }
+            } else if let start = runStart {
+                if index - start >= 11 {
+                    result.formUnion(start..<index)
+                }
+                runStart = nil
+            }
+        }
+
+        if let start = runStart, characters.count - start >= 11 {
+            result.formUnion(start..<characters.count)
+        }
+
+        selectedIndices = result.isEmpty
+            ? Set(characters.indices.filter { isDigit(characters[$0]) })
+            : result
+    }
+
+    private func isDigit(_ character: Character) -> Bool {
+        character.unicodeScalars.allSatisfy(CharacterSet.decimalDigits.contains)
+    }
+
+    private func isWhitespace(_ character: Character) -> Bool {
+        character.unicodeScalars.allSatisfy(CharacterSet.whitespacesAndNewlines.contains)
+    }
+
+    private func isASCIIAlpha(_ character: Character) -> Bool {
+        guard character.unicodeScalars.count == 1,
+              let scalar = character.unicodeScalars.first else {
+            return false
+        }
+        return (scalar.value >= 65 && scalar.value <= 90)
+            || (scalar.value >= 97 && scalar.value <= 122)
     }
 }
 
