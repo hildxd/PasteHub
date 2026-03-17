@@ -53,6 +53,7 @@ struct ClipboardListView: View {
     @State private var isSnippetEditorPresented = false
     @State private var editingSnippet: SnippetItem?
     @State private var tokenSelectionItem: ClipboardItem?
+    @State private var isClearConfirmationPresented = false
 
     init(
         store: ClipboardStore,
@@ -197,6 +198,14 @@ struct ClipboardListView: View {
                     )
                 }
             )
+        }
+        .alert("确认清空历史记录？", isPresented: $isClearConfirmationPresented) {
+            Button("取消", role: .cancel) {}
+            Button("清空", role: .destructive) {
+                store.clearAll()
+            }
+        } message: {
+            Text("清空后不可恢复。")
         }
         .onChange(of: availableHistoryTags) { _, tags in
             if let selectedHistoryTag, !tags.contains(selectedHistoryTag) {
@@ -605,7 +614,7 @@ struct ClipboardListView: View {
 
     private var clearButton: some View {
         Button("清空", role: .destructive) {
-            store.clearAll()
+            isClearConfirmationPresented = true
         }
         .buttonStyle(.borderedProminent)
         .controlSize(.small)
