@@ -2,7 +2,7 @@
 
 PasteHub 是一个 macOS 状态栏剪贴板工具：自动记录复制内容，通过全局快捷键呼出浮动面板，支持一键回填到原应用。
 
-![App截图](Images/screenshot-20260318-080507.png)
+![App截图](Images/screenshot-20260318-094525.png)
 
 ## 主要功能
 
