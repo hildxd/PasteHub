@@ -315,6 +315,7 @@ struct ClipboardListView: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity)
         .padding(4)
         .background(
             Color(nsColor: .controlBackgroundColor).opacity(0.82),
@@ -1055,13 +1056,15 @@ struct ClipboardListView: View {
             .foregroundStyle(isActive ? .white : .primary)
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, minHeight: 34)
             .background(
                 isActive ? Color.accentColor : Color.clear,
                 in: RoundedRectangle(cornerRadius: 10, style: .continuous)
             )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
     }
 
     private func collapseSearchIfNeeded() {
@@ -1337,8 +1340,11 @@ private struct CompactClipboardCard: View {
 
     private func compactMetaRow(foreground: Color, secondary: Color) -> some View {
         HStack(spacing: 4) {
-            Text(item.type.label)
+            Image(systemName: item.type.icon)
+                .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(foreground)
+                .frame(width: 16, height: 16)
+                .background(foreground.opacity(0.16), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
             Text("·")
                 .foregroundStyle(secondary)
             Text(ClipboardTimeFormatter.shared.string(from: item.timestamp))
@@ -1784,12 +1790,23 @@ private struct SnippetCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                Label("片段", systemImage: "bookmark.fill")
-                    .font(.system(size: 10, weight: .semibold, design: .rounded))
-                    .foregroundStyle(Color.accentColor)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.accentColor.opacity(0.15), in: Capsule())
+                if compactStyle {
+                    Image(systemName: "bookmark.fill")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Color.accentColor)
+                        .frame(width: 16, height: 16)
+                        .background(
+                            Color.accentColor.opacity(0.16),
+                            in: RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        )
+                } else {
+                    Label("片段", systemImage: "bookmark.fill")
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Color.accentColor)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.accentColor.opacity(0.15), in: Capsule())
+                }
 
                 Spacer()
 
