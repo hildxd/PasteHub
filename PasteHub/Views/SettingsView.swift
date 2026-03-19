@@ -649,11 +649,10 @@ private struct ExcludedAppsTab: View {
 // MARK: - About
 
 private struct AboutTab: View {
-    private let author = "FringHuang"
-    private let email = "hfl1995@gmail.com"
     private let githubURL = URL(string: "https://github.com/lageev/PasteHub")!
     private let coolapkURL = URL(string: "https://www.coolapk.com")!
-    @State private var didCopyEmail = false
+    private let xiaohongshuURL = URL(string: "https://www.xiaohongshu.com/user/profile/5ae19a3411be10493e3a5643")!
+    private let weiboURL = URL(string: "https://weibo.com/u/1788149651")!
 
     private var version: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown"
@@ -692,54 +691,26 @@ private struct AboutTab: View {
                     VStack(spacing: 12) {
                         AboutInfoRow(icon: "tag.fill", title: "版本", value: version)
                         AboutInfoRow(icon: "hammer.fill", title: "构建", value: build)
-                        AboutInfoRow(icon: "person.fill", title: "作者", value: author)
-
-                        HStack(spacing: 10) {
-                            Image(systemName: "envelope.fill")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(Color.accentColor)
-                                .frame(width: 18)
-                            Text("邮箱")
-                                .font(.system(size: 13, weight: .semibold))
-                            Spacer()
-                            Button {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(email, forType: .string)
-                                withAnimation(.spring(response: 0.28, dampingFraction: 0.72)) {
-                                    didCopyEmail = true
-                                }
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                                    withAnimation(.easeOut(duration: 0.2)) {
-                                        didCopyEmail = false
-                                    }
-                                }
-                            } label: {
-                                HStack(spacing: 4) {
-                                    if didCopyEmail {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .transition(.scale.combined(with: .opacity))
-                                    }
-                                    Text(didCopyEmail ? "已复制" : email)
-                                }
-                            }
-                            .buttonStyle(.plain)
-                            .font(.system(size: 13, weight: .medium, design: .rounded))
-                            .foregroundStyle(didCopyEmail ? .green : .secondary)
-                            .scaleEffect(didCopyEmail ? 1.04 : 1.0)
-                            .animation(.spring(response: 0.28, dampingFraction: 0.72), value: didCopyEmail)
-                        }
                     }
                 }
             }
 
             Spacer(minLength: 0)
 
-            HStack(spacing: 6) {
-                AboutFooterLink(icon: "cat.fill", label: "GitHub", destination: githubURL)
-                Text("·")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.quaternary)
-                AboutFooterLink(icon: "heart.fill", label: "@Coolapk", destination: coolapkURL)
+            VStack(spacing: 10) {
+                HStack(spacing: 16) {
+                    AboutIconLink(asset: "SocialXiaohongshu", tip: "小红书", destination: xiaohongshuURL)
+                    AboutIconLink(asset: "SocialEmail", tip: "邮箱", destination: URL(string: "mailto:hfl1995@gmail.com")!)
+                    AboutIconLink(asset: "SocialWeibo", tip: "微博", destination: weiboURL)
+                }
+
+                HStack(spacing: 6) {
+                    AboutFooterLink(icon: "cat.fill", label: "GitHub", destination: githubURL)
+                    Text("·")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.quaternary)
+                    AboutFooterLink(icon: "heart.fill", label: "@Coolapk", destination: coolapkURL)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .center)
             .padding(.bottom, 18)
@@ -798,6 +769,29 @@ private struct AboutFooterLink: View {
             .animation(.easeOut(duration: 0.15), value: isHovering)
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct AboutIconLink: View {
+    let asset: String
+    let tip: String
+    let destination: URL
+    @State private var isHovering = false
+
+    var body: some View {
+        Link(destination: destination) {
+            Image(asset)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 22, height: 22)
+                .saturation(isHovering ? 1 : 0)
+                .opacity(isHovering ? 1 : 0.45)
+                .contentShape(Circle())
+                .onHover { isHovering = $0 }
+                .animation(.easeOut(duration: 0.18), value: isHovering)
+        }
+        .buttonStyle(.plain)
+        .help(tip)
     }
 }
 
