@@ -38,6 +38,22 @@ private enum ClipboardFilter: String, CaseIterable, Identifiable {
 }
 
 struct ClipboardListView: View {
+    private enum SelectionDirection: String {
+        case left
+        case right
+        case up
+        case down
+
+        var sequentialStep: Int {
+            switch self {
+            case .left, .up:
+                return -1
+            case .right, .down:
+                return 1
+            }
+        }
+    }
+
     let store: ClipboardStore
     @Bindable var settings: SettingsManager
     let onOpenSettings: (() -> Void)?
@@ -54,6 +70,11 @@ struct ClipboardListView: View {
     @State private var editingSnippet: SnippetItem?
     @State private var tokenSelectionItem: ClipboardItem?
     @State private var isClearConfirmationPresented = false
+    @State private var selectedHistoryItemID: UUID?
+    @State private var selectedSnippetItemID: UUID?
+    @State private var isCommandModifierPressed = false
+    @State private var visibleHistoryItemIDs: Set<UUID> = []
+    @State private var visibleSnippetItemIDs: Set<UUID> = []
 
     init(
         store: ClipboardStore,
@@ -73,6 +94,10 @@ struct ClipboardListView: View {
 
     private var useHorizontalWaterfall: Bool {
         !isCompactMode && (settings.panelEdge == .top || settings.panelEdge == .bottom)
+    }
+
+    private var isHistoryWaterfallLayout: Bool {
+        !isSnippetMode && !useHorizontalWaterfall
     }
 
     private var chromeMaxWidth: CGFloat {
@@ -97,6 +122,13 @@ struct ClipboardListView: View {
     private let compactGridSpacing: CGFloat = 8
     private let compactColumnWidth: CGFloat = 172
     private let compactImageCardSize: CGFloat = 172
+    private static let quickShortcutKeys: [String] = {
+        let digits = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]
+        let letters = (0..<26).compactMap { index in
+            UnicodeScalar(65 + index).map { String(Character($0)) }
+        }
+        return digits + letters
+    }()
     private var compactSnippetCardWidth: CGFloat { compactPanelWidth - 28 }
 
     private var horizontalHistoryContentHeight: CGFloat {
@@ -154,6 +186,78 @@ struct ClipboardListView: View {
                 || snippet.tags.contains(where: { $0.localizedCaseInsensitiveContains(queryText) })
             )
         }
+    }
+
+    private var visibleHistoryItems: [ClipboardItem] {
+        filteredItems.filter { visibleHistoryItemIDs.contains($0.id) }
+    }
+
+    private var visibleSnippetItems: [SnippetItem] {
+        filteredSnippets.filter { visibleSnippetItemIDs.contains($0.id) }
+    }
+
+    private var quickShortcutCapacity: Int {
+        Self.quickShortcutKeys.count
+    }
+
+    private var quickSelectableHistoryItems: [ClipboardItem] {
+        let sourceItems = visibleHistoryItems.isEmpty ? filteredItems : visibleHistoryItems
+        return Array(sourceItems.prefix(quickShortcutCapacity))
+    }
+
+    private var quickSelectableSnippets: [SnippetItem] {
+        let sourceSnippets = visibleSnippetItems.isEmpty ? filteredSnippets : visibleSnippetItems
+        return Array(sourceSnippets.prefix(quickShortcutCapacity))
+    }
+
+    private var firstVisibleHistoryItemID: UUID? {
+        (visibleHistoryItems.isEmpty ? filteredItems : visibleHistoryItems).first?.id
+    }
+
+    private var firstVisibleSnippetItemID: UUID? {
+        (visibleSnippetItems.isEmpty ? filteredSnippets : visibleSnippetItems).first?.id
+    }
+
+    private var historyQuickLabelsByID: [UUID: String] {
+        guard isCommandModifierPressed else { return [:] }
+        var labels: [UUID: String] = [:]
+        for (index, item) in quickSelectableHistoryItems.enumerated() {
+            labels[item.id] = "⌘\(Self.quickShortcutKeys[index])"
+        }
+        return labels
+    }
+
+    private var snippetQuickLabelsByID: [UUID: String] {
+        guard isCommandModifierPressed else { return [:] }
+        var labels: [UUID: String] = [:]
+        for (index, snippet) in quickSelectableSnippets.enumerated() {
+            labels[snippet.id] = "⌘\(Self.quickShortcutKeys[index])"
+        }
+        return labels
+    }
+
+    private var selectedHistoryIndex: Int? {
+        guard let selectedHistoryItemID else { return nil }
+        return filteredItems.firstIndex(where: { $0.id == selectedHistoryItemID })
+    }
+
+    private var selectedSnippetIndex: Int? {
+        guard let selectedSnippetItemID else { return nil }
+        return filteredSnippets.firstIndex(where: { $0.id == selectedSnippetItemID })
+    }
+
+    private var horizontalHistoryVisibleRangeX: ClosedRange<CGFloat>? {
+        guard let selectedHistoryIndex else { return nil }
+        let itemStride = horizontalCardWidth + 8
+        let minX = CGFloat(selectedHistoryIndex) * itemStride
+        return minX...(minX + horizontalCardWidth)
+    }
+
+    private var horizontalSnippetVisibleRangeX: ClosedRange<CGFloat>? {
+        guard let selectedSnippetIndex else { return nil }
+        let itemStride = horizontalSnippetWidth + 8
+        let minX = CGFloat(selectedSnippetIndex) * itemStride
+        return minX...(minX + horizontalSnippetWidth)
     }
 
     var body: some View {
@@ -228,6 +332,53 @@ struct ClipboardListView: View {
                 selectedHistoryTag = nil
                 selectedSnippetTag = nil
                 isSearchExpanded = false
+            }
+        }
+        .onChange(of: filteredItems.map(\.id)) { _, _ in
+            syncSelectionIfNeeded()
+            syncVisibleItemsIfNeeded()
+        }
+        .onChange(of: filteredSnippets.map(\.id)) { _, _ in
+            syncSelectionIfNeeded()
+            syncVisibleItemsIfNeeded()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .panelDidHide)) { _ in
+            searchText = ""
+            isSearchExpanded = false
+            isSearchFocused = false
+            selectedHistoryItemID = nil
+            selectedSnippetItemID = nil
+            isCommandModifierPressed = false
+            visibleHistoryItemIDs.removeAll()
+            visibleSnippetItemIDs.removeAll()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .panelSelectionMove)) { notification in
+            guard let directionRaw = notification.userInfo?["direction"] as? String,
+                  let direction = SelectionDirection(rawValue: directionRaw) else { return }
+            moveSelection(direction: direction)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .panelSelectionActivate)) { _ in
+            activateSelectedItem()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .panelCommandModifierChanged)) { notification in
+            guard let isPressed = notification.userInfo?["isPressed"] as? Bool else { return }
+            isCommandModifierPressed = isPressed
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .panelQuickSelect)) { notification in
+            guard let index = notification.userInfo?["index"] as? Int else { return }
+            quickSelectAndActivate(index: index)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .panelKeyboardInput)) { notification in
+            guard let characters = notification.userInfo?["characters"] as? String else { return }
+            if !isSearchExpanded {
+                withAnimation(.easeInOut(duration: 0.14)) {
+                    isSearchExpanded = true
+                }
+            }
+            let shouldFocusSearch = !isSearchFocused
+            searchText += characters
+            if shouldFocusSearch {
+                focusSearchFieldForTyping()
             }
         }
     }
@@ -537,50 +688,88 @@ struct ClipboardListView: View {
     }
 
     private var compactWaterfallContent: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            let columns = compactWaterfallColumns(from: filteredItems)
-            HStack(alignment: .top, spacing: compactGridSpacing) {
-                ForEach(0..<2, id: \.self) { col in
-                    LazyVStack(spacing: compactGridSpacing) {
-                        ForEach(columns[col]) { item in
-                            CompactClipboardCard(
-                                item: item,
-                                cardWidth: compactColumnWidth,
-                                imageCardSize: compactImageCardSize,
-                                onPrimaryAction: { activateClipboardItem(item) },
-                                onCopy: { store.copyToClipboard(item) },
-                                onDelete: { store.remove(item) },
-                                onManageTags: { tagEditorItem = item },
-                                onSaveAsSnippet: { quickSaveAsSnippet(item) },
-                                onTokenSelect: { tokenSelectionItem = item }
-                            )
+        ScrollViewReader { proxy in
+            ScrollView(.vertical, showsIndicators: false) {
+                let columns = compactWaterfallColumns(from: filteredItems)
+                HStack(alignment: .top, spacing: compactGridSpacing) {
+                    ForEach(0..<2, id: \.self) { col in
+                        LazyVStack(spacing: compactGridSpacing) {
+                            ForEach(columns[col]) { item in
+                                CompactClipboardCard(
+                                    item: item,
+                                    cardWidth: compactColumnWidth,
+                                    imageCardSize: compactImageCardSize,
+                                    onPrimaryAction: {
+                                        selectedHistoryItemID = item.id
+                                        activateClipboardItem(item)
+                                    },
+                                    onCopy: { store.copyToClipboard(item) },
+                                    onDelete: { store.remove(item) },
+                                    onManageTags: { tagEditorItem = item },
+                                    onSaveAsSnippet: { quickSaveAsSnippet(item) },
+                                    onTokenSelect: { tokenSelectionItem = item },
+                                    isSelected: selectedHistoryItemID == item.id,
+                                    quickShortcutLabel: historyQuickLabelsByID[item.id]
+                                )
+                                .onAppear {
+                                    trackHistoryVisibility(item.id, isVisible: true)
+                                }
+                                .onDisappear {
+                                    trackHistoryVisibility(item.id, isVisible: false)
+                                }
+                            }
                         }
+                        .frame(width: compactColumnWidth, alignment: .top)
                     }
-                    .frame(width: compactColumnWidth, alignment: .top)
+                }
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.vertical, 2)
+            }
+            .onChange(of: selectedHistoryItemID) { _, selectedID in
+                guard let selectedID else { return }
+                withAnimation(.easeInOut(duration: 0.14)) {
+                    proxy.scrollTo(selectedID, anchor: .center)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.vertical, 2)
         }
     }
 
     private var compactSnippetContent: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            LazyVStack(spacing: compactGridSpacing) {
-                ForEach(filteredSnippets) { snippet in
-                    SnippetCard(
-                        snippet: snippet,
-                        onPrimaryAction: { activateSnippet(snippet) },
-                        onCopy: { store.copySnippetToClipboard(snippet) },
-                        onEdit: { beginEditSnippet(snippet) },
-                        onDelete: { store.removeSnippet(snippet) },
-                        preferredWidth: compactSnippetCardWidth,
-                        compactStyle: true
-                    )
+        ScrollViewReader { proxy in
+            ScrollView(.vertical, showsIndicators: false) {
+                LazyVStack(spacing: compactGridSpacing) {
+                    ForEach(filteredSnippets) { snippet in
+                        SnippetCard(
+                            snippet: snippet,
+                            onPrimaryAction: {
+                                selectedSnippetItemID = snippet.id
+                                activateSnippet(snippet)
+                            },
+                            onCopy: { store.copySnippetToClipboard(snippet) },
+                            onEdit: { beginEditSnippet(snippet) },
+                            onDelete: { store.removeSnippet(snippet) },
+                            preferredWidth: compactSnippetCardWidth,
+                            compactStyle: true,
+                            isSelected: selectedSnippetItemID == snippet.id,
+                            quickShortcutLabel: snippetQuickLabelsByID[snippet.id]
+                        )
+                        .onAppear {
+                            trackSnippetVisibility(snippet.id, isVisible: true)
+                        }
+                        .onDisappear {
+                            trackSnippetVisibility(snippet.id, isVisible: false)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 2)
+            }
+            .onChange(of: selectedSnippetItemID) { _, selectedID in
+                guard let selectedID else { return }
+                withAnimation(.easeInOut(duration: 0.14)) {
+                    proxy.scrollTo(selectedID, anchor: .center)
                 }
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 2)
         }
     }
 
@@ -747,36 +936,67 @@ struct ClipboardListView: View {
     }
 
     private var verticalWaterfallContent: some View {
-        ScrollView {
-            let columns = waterfallColumns(from: filteredItems)
-            HStack(alignment: .top, spacing: 10) {
-                ForEach(0..<2, id: \.self) { col in
-                    LazyVStack(spacing: 10) {
-                        ForEach(columns[col]) { item in
-                            ClipboardCard(
-                                item: item,
-                                onPrimaryAction: { activateClipboardItem(item) },
-                                onCopy: { store.copyToClipboard(item) },
-                                onDelete: { store.remove(item) },
-                                onManageTags: { tagEditorItem = item },
-                                onSaveAsSnippet: { quickSaveAsSnippet(item) },
-                                onTokenSelect: { tokenSelectionItem = item }
-                            )
+        ScrollViewReader { proxy in
+            GeometryReader { geometry in
+                ScrollView {
+                    let columns = waterfallColumns(from: filteredItems)
+                    let columnWidth = max((geometry.size.width - 10) / 2, 220)
+                    HStack(alignment: .top, spacing: 10) {
+                        ForEach(0..<2, id: \.self) { col in
+                            LazyVStack(spacing: 10) {
+                                ForEach(columns[col]) { item in
+                                    ClipboardCard(
+                                        item: item,
+                                        onPrimaryAction: {
+                                            selectedHistoryItemID = item.id
+                                            activateClipboardItem(item)
+                                        },
+                                        onCopy: { store.copyToClipboard(item) },
+                                        onDelete: { store.remove(item) },
+                                        onManageTags: { tagEditorItem = item },
+                                        onSaveAsSnippet: { quickSaveAsSnippet(item) },
+                                        onTokenSelect: { tokenSelectionItem = item },
+                                        preferredWidth: columnWidth,
+                                        isSelected: selectedHistoryItemID == item.id,
+                                        quickShortcutLabel: historyQuickLabelsByID[item.id]
+                                    )
+                                    .onAppear {
+                                        trackHistoryVisibility(item.id, isVisible: true)
+                                    }
+                                    .onDisappear {
+                                        trackHistoryVisibility(item.id, isVisible: false)
+                                    }
+                                }
+                            }
+                            .frame(width: columnWidth, alignment: .top)
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 4)
                 }
             }
-            .padding(.vertical, 4)
+            .onChange(of: selectedHistoryItemID) { _, selectedID in
+                guard let selectedID else { return }
+                withAnimation(.easeInOut(duration: 0.14)) {
+                    proxy.scrollTo(selectedID, anchor: .center)
+                }
+            }
         }
     }
 
     private var horizontalWaterfallContent: some View {
-        HorizontalWheelScrollView(indicatorBottomInset: horizontalScrollerGap) {
+        HorizontalWheelScrollView(
+            indicatorBottomInset: horizontalScrollerGap,
+            targetVisibleRangeX: horizontalHistoryVisibleRangeX
+        ) {
             LazyHStack(alignment: .top, spacing: 8) {
                 ForEach(filteredItems) { item in
                     ClipboardCard(
                         item: item,
-                        onPrimaryAction: { activateClipboardItem(item) },
+                        onPrimaryAction: {
+                            selectedHistoryItemID = item.id
+                            activateClipboardItem(item)
+                        },
                         onCopy: { store.copyToClipboard(item) },
                         onDelete: { store.remove(item) },
                         onManageTags: { tagEditorItem = item },
@@ -784,8 +1004,16 @@ struct ClipboardListView: View {
                         onTokenSelect: { tokenSelectionItem = item },
                         preferredWidth: horizontalCardWidth,
                         preferredHeight: horizontalCardHeight,
-                        compactStyle: true
+                        compactStyle: true,
+                        isSelected: selectedHistoryItemID == item.id,
+                        quickShortcutLabel: historyQuickLabelsByID[item.id]
                     )
+                    .onAppear {
+                        trackHistoryVisibility(item.id, isVisible: true)
+                    }
+                    .onDisappear {
+                        trackHistoryVisibility(item.id, isVisible: false)
+                    }
                 }
             }
             .padding(.vertical, 2)
@@ -794,36 +1022,69 @@ struct ClipboardListView: View {
     }
 
     private var verticalSnippetContent: some View {
-        ScrollView {
-            LazyVStack(spacing: 10) {
-                ForEach(filteredSnippets) { snippet in
-                    SnippetCard(
-                        snippet: snippet,
-                        onPrimaryAction: { activateSnippet(snippet) },
-                        onCopy: { store.copySnippetToClipboard(snippet) },
-                        onEdit: { beginEditSnippet(snippet) },
-                        onDelete: { store.removeSnippet(snippet) }
-                    )
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 10) {
+                    ForEach(filteredSnippets) { snippet in
+                        SnippetCard(
+                            snippet: snippet,
+                            onPrimaryAction: {
+                                selectedSnippetItemID = snippet.id
+                                activateSnippet(snippet)
+                            },
+                            onCopy: { store.copySnippetToClipboard(snippet) },
+                            onEdit: { beginEditSnippet(snippet) },
+                            onDelete: { store.removeSnippet(snippet) },
+                            isSelected: selectedSnippetItemID == snippet.id,
+                            quickShortcutLabel: snippetQuickLabelsByID[snippet.id]
+                        )
+                        .onAppear {
+                            trackSnippetVisibility(snippet.id, isVisible: true)
+                        }
+                        .onDisappear {
+                            trackSnippetVisibility(snippet.id, isVisible: false)
+                        }
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+            .onChange(of: selectedSnippetItemID) { _, selectedID in
+                guard let selectedID else { return }
+                withAnimation(.easeInOut(duration: 0.14)) {
+                    proxy.scrollTo(selectedID, anchor: .center)
                 }
             }
-            .padding(.vertical, 4)
         }
     }
 
     private var horizontalSnippetContent: some View {
-        HorizontalWheelScrollView(indicatorBottomInset: horizontalScrollerGap) {
+        HorizontalWheelScrollView(
+            indicatorBottomInset: horizontalScrollerGap,
+            targetVisibleRangeX: horizontalSnippetVisibleRangeX
+        ) {
             LazyHStack(alignment: .top, spacing: 8) {
                 ForEach(filteredSnippets) { snippet in
                     SnippetCard(
                         snippet: snippet,
-                        onPrimaryAction: { activateSnippet(snippet) },
+                        onPrimaryAction: {
+                            selectedSnippetItemID = snippet.id
+                            activateSnippet(snippet)
+                        },
                         onCopy: { store.copySnippetToClipboard(snippet) },
                         onEdit: { beginEditSnippet(snippet) },
                         onDelete: { store.removeSnippet(snippet) },
                         preferredWidth: horizontalSnippetWidth,
                         preferredHeight: horizontalSnippetHeight,
-                        compactStyle: true
+                        compactStyle: true,
+                        isSelected: selectedSnippetItemID == snippet.id,
+                        quickShortcutLabel: snippetQuickLabelsByID[snippet.id]
                     )
+                    .onAppear {
+                        trackSnippetVisibility(snippet.id, isVisible: true)
+                    }
+                    .onDisappear {
+                        trackSnippetVisibility(snippet.id, isVisible: false)
+                    }
                 }
             }
             .padding(.vertical, 2)
@@ -1075,6 +1336,159 @@ struct ClipboardListView: View {
         isSearchFocused = false
     }
 
+    private func focusSearchFieldForTyping() {
+        DispatchQueue.main.async {
+            isSearchFocused = true
+            moveSearchCaretToEnd(retryCount: 6)
+        }
+    }
+
+    private func moveSearchCaretToEnd(retryCount: Int) {
+        guard let textView = NSApp.keyWindow?.firstResponder as? NSTextView else {
+            guard retryCount > 0 else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) {
+                moveSearchCaretToEnd(retryCount: retryCount - 1)
+            }
+            return
+        }
+        let end = textView.string.count
+        textView.setSelectedRange(NSRange(location: end, length: 0))
+    }
+
+    private func syncSelectionIfNeeded() {
+        if let selectedHistoryItemID,
+           !filteredItems.contains(where: { $0.id == selectedHistoryItemID }) {
+            self.selectedHistoryItemID = nil
+        }
+        if let selectedSnippetItemID,
+           !filteredSnippets.contains(where: { $0.id == selectedSnippetItemID }) {
+            self.selectedSnippetItemID = nil
+        }
+    }
+
+    private func syncVisibleItemsIfNeeded() {
+        let validHistoryIDs = Set(filteredItems.map(\.id))
+        visibleHistoryItemIDs = visibleHistoryItemIDs.intersection(validHistoryIDs)
+
+        let validSnippetIDs = Set(filteredSnippets.map(\.id))
+        visibleSnippetItemIDs = visibleSnippetItemIDs.intersection(validSnippetIDs)
+    }
+
+    private func trackHistoryVisibility(_ itemID: UUID, isVisible: Bool) {
+        if isVisible {
+            visibleHistoryItemIDs.insert(itemID)
+        } else {
+            visibleHistoryItemIDs.remove(itemID)
+        }
+    }
+
+    private func trackSnippetVisibility(_ snippetID: UUID, isVisible: Bool) {
+        if isVisible {
+            visibleSnippetItemIDs.insert(snippetID)
+        } else {
+            visibleSnippetItemIDs.remove(snippetID)
+        }
+    }
+
+    private func moveSelection(direction: SelectionDirection) {
+        if isSnippetMode {
+            let ids = filteredSnippets.map(\.id)
+            selectedSnippetItemID = advancedSelectionID(
+                currentID: selectedSnippetItemID,
+                allIDs: ids,
+                step: direction.sequentialStep,
+                startID: firstVisibleSnippetItemID
+            )
+            return
+        }
+
+        if isHistoryWaterfallLayout, direction == .up || direction == .down {
+            moveHistorySelectionInSameColumn(direction: direction)
+            return
+        }
+
+        let ids = filteredItems.map(\.id)
+        selectedHistoryItemID = advancedSelectionID(
+            currentID: selectedHistoryItemID,
+            allIDs: ids,
+            step: direction.sequentialStep,
+            startID: firstVisibleHistoryItemID
+        )
+    }
+
+    private func moveHistorySelectionInSameColumn(direction: SelectionDirection) {
+        guard !filteredItems.isEmpty else {
+            selectedHistoryItemID = nil
+            return
+        }
+
+        guard let selectedHistoryItemID else {
+            self.selectedHistoryItemID = firstVisibleHistoryItemID ?? filteredItems[0].id
+            return
+        }
+
+        let columns = isCompactMode
+            ? compactWaterfallColumns(from: filteredItems)
+            : waterfallColumns(from: filteredItems)
+        for column in columns {
+            guard let currentIndex = column.firstIndex(where: { $0.id == selectedHistoryItemID }) else { continue }
+            let targetIndex = direction == .down ? currentIndex + 1 : currentIndex - 1
+            guard column.indices.contains(targetIndex) else { return }
+            self.selectedHistoryItemID = column[targetIndex].id
+            return
+        }
+
+        self.selectedHistoryItemID = firstVisibleHistoryItemID ?? filteredItems[0].id
+    }
+
+    private func advancedSelectionID(currentID: UUID?, allIDs: [UUID], step: Int, startID: UUID?) -> UUID? {
+        guard !allIDs.isEmpty else { return nil }
+        guard let currentID,
+              let currentIndex = allIDs.firstIndex(of: currentID) else {
+            if let startID, allIDs.contains(startID) {
+                return startID
+            }
+            return allIDs[0]
+        }
+        let next = min(max(currentIndex + step, 0), allIDs.count - 1)
+        return allIDs[next]
+    }
+
+    private func activateSelectedItem() {
+        if isSnippetMode {
+            guard let selectedSnippetItemID,
+                  let snippet = filteredSnippets.first(where: { $0.id == selectedSnippetItemID }) else {
+                return
+            }
+            activateSnippet(snippet)
+            return
+        }
+
+        guard let selectedHistoryItemID,
+              let item = filteredItems.first(where: { $0.id == selectedHistoryItemID }) else {
+            return
+        }
+        activateClipboardItem(item)
+    }
+
+    private func quickSelectAndActivate(index: Int) {
+        guard index >= 0 else { return }
+        if isSnippetMode {
+            let quickSnippets = quickSelectableSnippets
+            guard quickSnippets.indices.contains(index) else { return }
+            let snippet = quickSnippets[index]
+            selectedSnippetItemID = snippet.id
+            activateSnippet(snippet)
+            return
+        }
+
+        let quickItems = quickSelectableHistoryItems
+        guard quickItems.indices.contains(index) else { return }
+        let item = quickItems[index]
+        selectedHistoryItemID = item.id
+        activateClipboardItem(item)
+    }
+
     private func beginAddSnippet() {
         editingSnippet = nil
         isSnippetEditorPresented = true
@@ -1151,6 +1565,8 @@ private struct CompactClipboardCard: View {
     let onManageTags: () -> Void
     let onSaveAsSnippet: () -> Void
     let onTokenSelect: () -> Void
+    let isSelected: Bool
+    let quickShortcutLabel: String?
     @State private var isHovering = false
 
     private var accent: Color {
@@ -1211,6 +1627,16 @@ private struct CompactClipboardCard: View {
                 imageCardBody
             } else {
                 regularCardBody
+            }
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(isSelected ? Color.accentColor : Color.clear, lineWidth: 2)
+        )
+        .overlay(alignment: .topTrailing) {
+            if let quickShortcutLabel {
+                QuickShortcutBadge(label: quickShortcutLabel)
+                    .padding(8)
             }
         }
         .contextMenu {
@@ -1388,13 +1814,16 @@ private struct CompactClipboardCard: View {
 
 private struct HorizontalWheelScrollView<Content: View>: NSViewRepresentable {
     let indicatorBottomInset: CGFloat
+    let targetVisibleRangeX: ClosedRange<CGFloat>?
     let content: Content
 
     init(
         indicatorBottomInset: CGFloat = 0,
+        targetVisibleRangeX: ClosedRange<CGFloat>? = nil,
         @ViewBuilder content: () -> Content
     ) {
         self.indicatorBottomInset = indicatorBottomInset
+        self.targetVisibleRangeX = targetVisibleRangeX
         self.content = content()
     }
 
@@ -1421,17 +1850,25 @@ private struct HorizontalWheelScrollView<Content: View>: NSViewRepresentable {
         )
 
         let hostingView = context.coordinator.hostingView
+        context.coordinator.targetVisibleRangeX = targetVisibleRangeX
         scrollView.documentView = hostingView
-        scrollView.onLayout = { [weak scrollView, weak hostingView] in
+        scrollView.onLayout = { [weak scrollView, weak hostingView, weak coordinator = context.coordinator] in
             guard let scrollView, let hostingView else { return }
             Self.syncDocumentFrame(scrollView: scrollView, hostingView: hostingView)
+            Self.ensureVisibleRange(
+                targetRangeX: coordinator?.targetVisibleRangeX,
+                scrollView: scrollView,
+                animated: false
+            )
         }
         Self.syncDocumentFrame(scrollView: scrollView, hostingView: hostingView)
+        Self.ensureVisibleRange(targetRangeX: targetVisibleRangeX, scrollView: scrollView, animated: false)
         return scrollView
     }
 
     func updateNSView(_ scrollView: WheelEnabledHorizontalScrollView, context: Context) {
         let hostingView = context.coordinator.hostingView
+        context.coordinator.targetVisibleRangeX = targetVisibleRangeX
         hostingView.rootView = content
         scrollView.contentInsets = NSEdgeInsets(
             top: 0,
@@ -1440,6 +1877,7 @@ private struct HorizontalWheelScrollView<Content: View>: NSViewRepresentable {
             right: 0
         )
         Self.syncDocumentFrame(scrollView: scrollView, hostingView: hostingView)
+        Self.ensureVisibleRange(targetRangeX: targetVisibleRangeX, scrollView: scrollView, animated: true)
     }
 
     private static func syncDocumentFrame(
@@ -1457,8 +1895,45 @@ private struct HorizontalWheelScrollView<Content: View>: NSViewRepresentable {
         }
     }
 
+    private static func ensureVisibleRange(
+        targetRangeX: ClosedRange<CGFloat>?,
+        scrollView: NSScrollView,
+        animated: Bool
+    ) {
+        guard let targetRangeX, let documentView = scrollView.documentView else { return }
+        let visibleMinX = scrollView.contentView.bounds.minX
+        let visibleMaxX = visibleMinX + scrollView.contentView.bounds.width
+
+        let targetX: CGFloat
+        if targetRangeX.lowerBound < visibleMinX {
+            targetX = targetRangeX.lowerBound
+        } else if targetRangeX.upperBound > visibleMaxX {
+            targetX = targetRangeX.upperBound - scrollView.contentView.bounds.width
+        } else {
+            return
+        }
+
+        let maxOffsetX = max(documentView.frame.width - scrollView.contentView.bounds.width, 0)
+        let clampedX = min(max(targetX, 0), maxOffsetX)
+        let currentX = scrollView.contentView.bounds.origin.x
+        guard abs(currentX - clampedX) > 1 else { return }
+
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.12
+                scrollView.contentView.animator().setBoundsOrigin(NSPoint(x: clampedX, y: 0))
+            } completionHandler: {
+                scrollView.reflectScrolledClipView(scrollView.contentView)
+            }
+        } else {
+            scrollView.contentView.scroll(to: NSPoint(x: clampedX, y: 0))
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        }
+    }
+
     final class Coordinator {
         let hostingView: NSHostingView<Content>
+        var targetVisibleRangeX: ClosedRange<CGFloat>?
 
         init(rootView: Content) {
             hostingView = NSHostingView(rootView: rootView)
@@ -1559,6 +2034,8 @@ private struct ClipboardCard: View {
     let preferredWidth: CGFloat?
     let preferredHeight: CGFloat?
     let compactStyle: Bool
+    let isSelected: Bool
+    let quickShortcutLabel: String?
     @State private var isHovering = false
     @State private var isPressing = false
 
@@ -1572,7 +2049,9 @@ private struct ClipboardCard: View {
         onTokenSelect: @escaping () -> Void,
         preferredWidth: CGFloat? = nil,
         preferredHeight: CGFloat? = nil,
-        compactStyle: Bool = false
+        compactStyle: Bool = false,
+        isSelected: Bool = false,
+        quickShortcutLabel: String? = nil
     ) {
         self.item = item
         self.onPrimaryAction = onPrimaryAction
@@ -1584,6 +2063,8 @@ private struct ClipboardCard: View {
         self.preferredWidth = preferredWidth
         self.preferredHeight = preferredHeight
         self.compactStyle = compactStyle
+        self.isSelected = isSelected
+        self.quickShortcutLabel = quickShortcutLabel
     }
 
     private var accent: Color {
@@ -1885,6 +2366,16 @@ private struct ClipboardCard: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(Color.accentColor.opacity(isPressing ? 0.08 : 0))
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(isSelected ? Color.accentColor : Color.clear, lineWidth: 2)
+        )
+        .overlay(alignment: .topTrailing) {
+            if let quickShortcutLabel {
+                QuickShortcutBadge(label: quickShortcutLabel)
+                    .padding(8)
+            }
+        }
         .scaleEffect(isPressing ? 0.988 : 1)
         .onTapGesture(perform: onPrimaryAction)
         .contextMenu {
@@ -1920,6 +2411,8 @@ private struct SnippetCard: View {
     let preferredWidth: CGFloat?
     let preferredHeight: CGFloat?
     let compactStyle: Bool
+    let isSelected: Bool
+    let quickShortcutLabel: String?
     @State private var isHovering = false
     @State private var isPressing = false
 
@@ -1931,7 +2424,9 @@ private struct SnippetCard: View {
         onDelete: @escaping () -> Void,
         preferredWidth: CGFloat? = nil,
         preferredHeight: CGFloat? = nil,
-        compactStyle: Bool = false
+        compactStyle: Bool = false,
+        isSelected: Bool = false,
+        quickShortcutLabel: String? = nil
     ) {
         self.snippet = snippet
         self.onPrimaryAction = onPrimaryAction
@@ -1941,6 +2436,8 @@ private struct SnippetCard: View {
         self.preferredWidth = preferredWidth
         self.preferredHeight = preferredHeight
         self.compactStyle = compactStyle
+        self.isSelected = isSelected
+        self.quickShortcutLabel = quickShortcutLabel
     }
 
     var body: some View {
@@ -2025,6 +2522,16 @@ private struct SnippetCard: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(Color.accentColor.opacity(isPressing ? 0.08 : 0))
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(isSelected ? Color.accentColor : Color.clear, lineWidth: 2)
+        )
+        .overlay(alignment: .topTrailing) {
+            if let quickShortcutLabel {
+                QuickShortcutBadge(label: quickShortcutLabel)
+                    .padding(8)
+            }
+        }
         .scaleEffect(isPressing ? 0.988 : 1)
         .onTapGesture(perform: onPrimaryAction)
         .contextMenu {
@@ -2044,6 +2551,20 @@ private struct SnippetCard: View {
                 isPressing = pressing
             }
         }, perform: {})
+    }
+}
+
+private struct QuickShortcutBadge: View {
+    let label: String
+
+    var body: some View {
+        Text(label)
+            .font(.system(size: 10, weight: .bold, design: .rounded))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Color.black.opacity(0.68), in: Capsule())
+            .allowsHitTesting(false)
     }
 }
 

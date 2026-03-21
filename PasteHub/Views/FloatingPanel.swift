@@ -1,9 +1,19 @@
 import AppKit
 import SwiftUI
 
+extension Notification.Name {
+    static let panelKeyboardInput = Notification.Name("panelKeyboardInput")
+    static let panelDidHide = Notification.Name("panelDidHide")
+    static let panelSelectionMove = Notification.Name("panelSelectionMove")
+    static let panelSelectionActivate = Notification.Name("panelSelectionActivate")
+    static let panelCommandModifierChanged = Notification.Name("panelCommandModifierChanged")
+    static let panelQuickSelect = Notification.Name("panelQuickSelect")
+}
+
 final class FloatingPanel: NSPanel, NSWindowDelegate {
     private let settings: SettingsManager
     private var isPresented = false
+    private static let quickSelectKeys: [Character] = Array("1234567890abcdefghijklmnopqrstuvwxyz")
     var onDidHide: (() -> Void)?
     var statusButtonProvider: (() -> NSStatusBarButton?)?
     private let topBottomPanelHeight: CGFloat = 320
@@ -48,6 +58,57 @@ final class FloatingPanel: NSPanel, NSWindowDelegate {
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    override func keyDown(with event: NSEvent) {
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if modifiers.contains(.command),
+           let quickIndex = quickSelectIndex(from: event) {
+            NotificationCenter.default.post(
+                name: .panelQuickSelect,
+                object: nil,
+                userInfo: ["index": quickIndex]
+            )
+            return
+        }
+
+        if modifiers.intersection([.command, .control, .option]).isEmpty {
+            if let direction = selectionDirection(for: event.keyCode) {
+                NotificationCenter.default.post(
+                    name: .panelSelectionMove,
+                    object: nil,
+                    userInfo: ["direction": direction]
+                )
+                return
+            }
+
+            if event.keyCode == 36 || event.keyCode == 76 {
+                NotificationCenter.default.post(name: .panelSelectionActivate, object: nil)
+                return
+            }
+
+            if let characters = event.characters,
+               !characters.isEmpty,
+               characters.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }) {
+                NotificationCenter.default.post(
+                    name: .panelKeyboardInput,
+                    object: nil,
+                    userInfo: ["characters": characters]
+                )
+                return
+            }
+        }
+        super.keyDown(with: event)
+    }
+
+    override func flagsChanged(with event: NSEvent) {
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        NotificationCenter.default.post(
+            name: .panelCommandModifierChanged,
+            object: nil,
+            userInfo: ["isPressed": modifiers.contains(.command)]
+        )
+        super.flagsChanged(with: event)
+    }
 
     override func close() {
         hide()
@@ -114,6 +175,7 @@ final class FloatingPanel: NSPanel, NSWindowDelegate {
 
     private func hide() {
         isPresented = false
+        NotificationCenter.default.post(name: .panelDidHide, object: nil)
         guard isVisible, let screen = targetScreenForCurrentFrame() else {
             level = .normal
             orderOut(nil)
@@ -287,5 +349,29 @@ final class FloatingPanel: NSPanel, NSWindowDelegate {
             width: 20,
             height: 20
         )
+    }
+
+    private func selectionDirection(for keyCode: UInt16) -> String? {
+        switch keyCode {
+        case 123:
+            return "left"
+        case 124:
+            return "right"
+        case 125:
+            return "down"
+        case 126:
+            return "up"
+        default:
+            return nil
+        }
+    }
+
+    private func quickSelectIndex(from event: NSEvent) -> Int? {
+        guard let chars = event.charactersIgnoringModifiers?.lowercased(),
+              chars.count == 1,
+              let key = chars.first else {
+            return nil
+        }
+        return Self.quickSelectKeys.firstIndex(of: key)
     }
 }
