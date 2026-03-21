@@ -154,7 +154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             if self.shouldPresentSettingsAfterPanelHides {
                 self.shouldPresentSettingsAfterPanelHides = false
-                self.presentSettingsWindow(centerBeforeShowing: true)
+                self.presentSettingsWindow(centerBeforeShowing: false)
                 return
             }
 
@@ -177,7 +177,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func openSettingsFromPanel() {
         guard panel?.isVisible == true else {
-            presentSettingsWindow(centerBeforeShowing: true)
+            presentSettingsWindow(centerBeforeShowing: false)
             return
         }
 
