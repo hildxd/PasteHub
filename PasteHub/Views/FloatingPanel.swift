@@ -13,6 +13,7 @@ extension Notification.Name {
 final class FloatingPanel: NSPanel, NSWindowDelegate {
     private let settings: SettingsManager
     private var isPresented = false
+    private static let quickSelectKeys: [Character] = Array("1234567890abcdefghijklmnopqrstuvwxyz")
     var onDidHide: (() -> Void)?
     var statusButtonProvider: (() -> NSStatusBarButton?)?
     private let topBottomPanelHeight: CGFloat = 320
@@ -366,17 +367,11 @@ final class FloatingPanel: NSPanel, NSWindowDelegate {
     }
 
     private func quickSelectIndex(from event: NSEvent) -> Int? {
-        guard let chars = event.charactersIgnoringModifiers,
-              let digit = chars.first else {
+        guard let chars = event.charactersIgnoringModifiers?.lowercased(),
+              chars.count == 1,
+              let key = chars.first else {
             return nil
         }
-        switch digit {
-        case "1"..."9":
-            return Int(String(digit)).map { $0 - 1 }
-        case "0":
-            return 9
-        default:
-            return nil
-        }
+        return Self.quickSelectKeys.firstIndex(of: key)
     }
 }

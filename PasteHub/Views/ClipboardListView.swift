@@ -73,6 +73,8 @@ struct ClipboardListView: View {
     @State private var selectedHistoryItemID: UUID?
     @State private var selectedSnippetItemID: UUID?
     @State private var isCommandModifierPressed = false
+    @State private var visibleHistoryItemIDs: Set<UUID> = []
+    @State private var visibleSnippetItemIDs: Set<UUID> = []
 
     init(
         store: ClipboardStore,
@@ -120,6 +122,13 @@ struct ClipboardListView: View {
     private let compactGridSpacing: CGFloat = 8
     private let compactColumnWidth: CGFloat = 172
     private let compactImageCardSize: CGFloat = 172
+    private static let quickShortcutKeys: [String] = {
+        let digits = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]
+        let letters = (0..<26).compactMap { index in
+            UnicodeScalar(65 + index).map { String(Character($0)) }
+        }
+        return digits + letters
+    }()
     private var compactSnippetCardWidth: CGFloat { compactPanelWidth - 28 }
 
     private var horizontalHistoryContentHeight: CGFloat {
@@ -179,11 +188,41 @@ struct ClipboardListView: View {
         }
     }
 
+    private var visibleHistoryItems: [ClipboardItem] {
+        filteredItems.filter { visibleHistoryItemIDs.contains($0.id) }
+    }
+
+    private var visibleSnippetItems: [SnippetItem] {
+        filteredSnippets.filter { visibleSnippetItemIDs.contains($0.id) }
+    }
+
+    private var quickShortcutCapacity: Int {
+        Self.quickShortcutKeys.count
+    }
+
+    private var quickSelectableHistoryItems: [ClipboardItem] {
+        let sourceItems = visibleHistoryItems.isEmpty ? filteredItems : visibleHistoryItems
+        return Array(sourceItems.prefix(quickShortcutCapacity))
+    }
+
+    private var quickSelectableSnippets: [SnippetItem] {
+        let sourceSnippets = visibleSnippetItems.isEmpty ? filteredSnippets : visibleSnippetItems
+        return Array(sourceSnippets.prefix(quickShortcutCapacity))
+    }
+
+    private var firstVisibleHistoryItemID: UUID? {
+        (visibleHistoryItems.isEmpty ? filteredItems : visibleHistoryItems).first?.id
+    }
+
+    private var firstVisibleSnippetItemID: UUID? {
+        (visibleSnippetItems.isEmpty ? filteredSnippets : visibleSnippetItems).first?.id
+    }
+
     private var historyQuickLabelsByID: [UUID: String] {
         guard isCommandModifierPressed else { return [:] }
         var labels: [UUID: String] = [:]
-        for (index, item) in filteredItems.prefix(10).enumerated() {
-            labels[item.id] = "⌘\(index == 9 ? "0" : "\(index + 1)")"
+        for (index, item) in quickSelectableHistoryItems.enumerated() {
+            labels[item.id] = "⌘\(Self.quickShortcutKeys[index])"
         }
         return labels
     }
@@ -191,8 +230,8 @@ struct ClipboardListView: View {
     private var snippetQuickLabelsByID: [UUID: String] {
         guard isCommandModifierPressed else { return [:] }
         var labels: [UUID: String] = [:]
-        for (index, snippet) in filteredSnippets.prefix(10).enumerated() {
-            labels[snippet.id] = "⌘\(index == 9 ? "0" : "\(index + 1)")"
+        for (index, snippet) in quickSelectableSnippets.enumerated() {
+            labels[snippet.id] = "⌘\(Self.quickShortcutKeys[index])"
         }
         return labels
     }
@@ -297,9 +336,11 @@ struct ClipboardListView: View {
         }
         .onChange(of: filteredItems.map(\.id)) { _, _ in
             syncSelectionIfNeeded()
+            syncVisibleItemsIfNeeded()
         }
         .onChange(of: filteredSnippets.map(\.id)) { _, _ in
             syncSelectionIfNeeded()
+            syncVisibleItemsIfNeeded()
         }
         .onReceive(NotificationCenter.default.publisher(for: .panelDidHide)) { _ in
             searchText = ""
@@ -308,6 +349,8 @@ struct ClipboardListView: View {
             selectedHistoryItemID = nil
             selectedSnippetItemID = nil
             isCommandModifierPressed = false
+            visibleHistoryItemIDs.removeAll()
+            visibleSnippetItemIDs.removeAll()
         }
         .onReceive(NotificationCenter.default.publisher(for: .panelSelectionMove)) { notification in
             guard let directionRaw = notification.userInfo?["direction"] as? String,
@@ -668,6 +711,12 @@ struct ClipboardListView: View {
                                     isSelected: selectedHistoryItemID == item.id,
                                     quickShortcutLabel: historyQuickLabelsByID[item.id]
                                 )
+                                .onAppear {
+                                    trackHistoryVisibility(item.id, isVisible: true)
+                                }
+                                .onDisappear {
+                                    trackHistoryVisibility(item.id, isVisible: false)
+                                }
                             }
                         }
                         .frame(width: compactColumnWidth, alignment: .top)
@@ -704,6 +753,12 @@ struct ClipboardListView: View {
                             isSelected: selectedSnippetItemID == snippet.id,
                             quickShortcutLabel: snippetQuickLabelsByID[snippet.id]
                         )
+                        .onAppear {
+                            trackSnippetVisibility(snippet.id, isVisible: true)
+                        }
+                        .onDisappear {
+                            trackSnippetVisibility(snippet.id, isVisible: false)
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -905,6 +960,12 @@ struct ClipboardListView: View {
                                         isSelected: selectedHistoryItemID == item.id,
                                         quickShortcutLabel: historyQuickLabelsByID[item.id]
                                     )
+                                    .onAppear {
+                                        trackHistoryVisibility(item.id, isVisible: true)
+                                    }
+                                    .onDisappear {
+                                        trackHistoryVisibility(item.id, isVisible: false)
+                                    }
                                 }
                             }
                             .frame(width: columnWidth, alignment: .top)
@@ -947,6 +1008,12 @@ struct ClipboardListView: View {
                         isSelected: selectedHistoryItemID == item.id,
                         quickShortcutLabel: historyQuickLabelsByID[item.id]
                     )
+                    .onAppear {
+                        trackHistoryVisibility(item.id, isVisible: true)
+                    }
+                    .onDisappear {
+                        trackHistoryVisibility(item.id, isVisible: false)
+                    }
                 }
             }
             .padding(.vertical, 2)
@@ -971,6 +1038,12 @@ struct ClipboardListView: View {
                             isSelected: selectedSnippetItemID == snippet.id,
                             quickShortcutLabel: snippetQuickLabelsByID[snippet.id]
                         )
+                        .onAppear {
+                            trackSnippetVisibility(snippet.id, isVisible: true)
+                        }
+                        .onDisappear {
+                            trackSnippetVisibility(snippet.id, isVisible: false)
+                        }
                     }
                 }
                 .padding(.vertical, 4)
@@ -1006,6 +1079,12 @@ struct ClipboardListView: View {
                         isSelected: selectedSnippetItemID == snippet.id,
                         quickShortcutLabel: snippetQuickLabelsByID[snippet.id]
                     )
+                    .onAppear {
+                        trackSnippetVisibility(snippet.id, isVisible: true)
+                    }
+                    .onDisappear {
+                        trackSnippetVisibility(snippet.id, isVisible: false)
+                    }
                 }
             }
             .padding(.vertical, 2)
@@ -1287,13 +1366,38 @@ struct ClipboardListView: View {
         }
     }
 
+    private func syncVisibleItemsIfNeeded() {
+        let validHistoryIDs = Set(filteredItems.map(\.id))
+        visibleHistoryItemIDs = visibleHistoryItemIDs.intersection(validHistoryIDs)
+
+        let validSnippetIDs = Set(filteredSnippets.map(\.id))
+        visibleSnippetItemIDs = visibleSnippetItemIDs.intersection(validSnippetIDs)
+    }
+
+    private func trackHistoryVisibility(_ itemID: UUID, isVisible: Bool) {
+        if isVisible {
+            visibleHistoryItemIDs.insert(itemID)
+        } else {
+            visibleHistoryItemIDs.remove(itemID)
+        }
+    }
+
+    private func trackSnippetVisibility(_ snippetID: UUID, isVisible: Bool) {
+        if isVisible {
+            visibleSnippetItemIDs.insert(snippetID)
+        } else {
+            visibleSnippetItemIDs.remove(snippetID)
+        }
+    }
+
     private func moveSelection(direction: SelectionDirection) {
         if isSnippetMode {
             let ids = filteredSnippets.map(\.id)
             selectedSnippetItemID = advancedSelectionID(
                 currentID: selectedSnippetItemID,
                 allIDs: ids,
-                step: direction.sequentialStep
+                step: direction.sequentialStep,
+                startID: firstVisibleSnippetItemID
             )
             return
         }
@@ -1307,7 +1411,8 @@ struct ClipboardListView: View {
         selectedHistoryItemID = advancedSelectionID(
             currentID: selectedHistoryItemID,
             allIDs: ids,
-            step: direction.sequentialStep
+            step: direction.sequentialStep,
+            startID: firstVisibleHistoryItemID
         )
     }
 
@@ -1318,7 +1423,7 @@ struct ClipboardListView: View {
         }
 
         guard let selectedHistoryItemID else {
-            self.selectedHistoryItemID = filteredItems[0].id
+            self.selectedHistoryItemID = firstVisibleHistoryItemID ?? filteredItems[0].id
             return
         }
 
@@ -1333,13 +1438,16 @@ struct ClipboardListView: View {
             return
         }
 
-        self.selectedHistoryItemID = filteredItems[0].id
+        self.selectedHistoryItemID = firstVisibleHistoryItemID ?? filteredItems[0].id
     }
 
-    private func advancedSelectionID(currentID: UUID?, allIDs: [UUID], step: Int) -> UUID? {
+    private func advancedSelectionID(currentID: UUID?, allIDs: [UUID], step: Int, startID: UUID?) -> UUID? {
         guard !allIDs.isEmpty else { return nil }
         guard let currentID,
               let currentIndex = allIDs.firstIndex(of: currentID) else {
+            if let startID, allIDs.contains(startID) {
+                return startID
+            }
             return allIDs[0]
         }
         let next = min(max(currentIndex + step, 0), allIDs.count - 1)
@@ -1366,7 +1474,7 @@ struct ClipboardListView: View {
     private func quickSelectAndActivate(index: Int) {
         guard index >= 0 else { return }
         if isSnippetMode {
-            let quickSnippets = Array(filteredSnippets.prefix(10))
+            let quickSnippets = quickSelectableSnippets
             guard quickSnippets.indices.contains(index) else { return }
             let snippet = quickSnippets[index]
             selectedSnippetItemID = snippet.id
@@ -1374,7 +1482,7 @@ struct ClipboardListView: View {
             return
         }
 
-        let quickItems = Array(filteredItems.prefix(10))
+        let quickItems = quickSelectableHistoryItems
         guard quickItems.indices.contains(index) else { return }
         let item = quickItems[index]
         selectedHistoryItemID = item.id
