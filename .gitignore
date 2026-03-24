@@ -17,3 +17,13 @@ Package.resolved
 
 # Archive
 *.xcarchive
+
+# Secrets & local config
+.env
+.env.*
+*.env
+*.p8
+*.p12
+*.mobileprovision
+GoogleService-Info.plist
+**/Secrets.xcconfig

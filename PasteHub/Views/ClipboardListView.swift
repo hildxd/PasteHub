@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 import SwiftUI
 
 private enum ClipboardFilter: String, CaseIterable, Identifiable {
@@ -75,6 +76,8 @@ struct ClipboardListView: View {
     @State private var isCommandModifierPressed = false
     @State private var visibleHistoryItemIDs: Set<UUID> = []
     @State private var visibleSnippetItemIDs: Set<UUID> = []
+    @State private var cachedWaterfallColumns: [[ClipboardItem]] = [[], []]
+    @State private var cachedCompactWaterfallColumns: [[ClipboardItem]] = [[], []]
     @State private var horizontalHistoryViewportRangeX: ClosedRange<CGFloat>?
     @State private var horizontalSnippetViewportRangeX: ClosedRange<CGFloat>?
     @State private var localKeyDownMonitor: Any?
@@ -509,10 +512,14 @@ struct ClipboardListView: View {
         .onChange(of: searchText) { _, _ in
             syncHighDensitySearchModeIfNeeded()
         }
+        .onChange(of: compactDensity) { _, _ in
+            rebuildWaterfallCaches()
+        }
         .onChange(of: filteredItems.map(\.id)) { _, _ in
             syncHighDensitySearchModeIfNeeded()
             syncSelectionIfNeeded()
             syncVisibleItemsIfNeeded()
+            rebuildWaterfallCaches()
         }
         .onChange(of: filteredSnippets.map(\.id)) { _, _ in
             syncHighDensitySearchModeIfNeeded()
@@ -526,6 +533,8 @@ struct ClipboardListView: View {
             selectedHistoryItemID = nil
             selectedSnippetItemID = nil
             isCommandModifierPressed = false
+            ImagePreviewCache.shared.removeAllObjects()
+            ImageIconPreviewCache.shared.removeAllObjects()
         }
         .onReceive(NotificationCenter.default.publisher(for: .panelSelectionMove)) { notification in
             guard let directionRaw = notification.userInfo?["direction"] as? String,
@@ -558,6 +567,7 @@ struct ClipboardListView: View {
         }
         .onAppear {
             installLocalKeyboardBridgingIfNeeded()
+            rebuildWaterfallCaches()
         }
         .onDisappear {
             removeLocalKeyboardBridging()
@@ -926,7 +936,7 @@ struct ClipboardListView: View {
     private var compactWaterfallContent: some View {
         ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
-                let columns = compactWaterfallColumns(from: filteredItems)
+                let columns = cachedCompactWaterfallColumns
                 HStack(alignment: .top, spacing: compactGridSpacing) {
                     ForEach(0..<2, id: \.self) { col in
                         LazyVStack(spacing: compactGridSpacing) {
@@ -1289,7 +1299,7 @@ struct ClipboardListView: View {
         ScrollViewReader { proxy in
             GeometryReader { geometry in
                 ScrollView {
-                    let columns = waterfallColumns(from: filteredItems)
+                    let columns = cachedWaterfallColumns
                     let columnWidth = max((geometry.size.width - 10) / 2, 220)
                     HStack(alignment: .top, spacing: 10) {
                         ForEach(0..<2, id: \.self) { col in
@@ -1476,6 +1486,11 @@ struct ClipboardListView: View {
             .padding(.vertical, 2)
         }
         .frame(height: horizontalSnippetContentHeight)
+    }
+
+    private func rebuildWaterfallCaches() {
+        cachedWaterfallColumns = waterfallColumns(from: filteredItems)
+        cachedCompactWaterfallColumns = compactWaterfallColumns(from: filteredItems)
     }
 
     private func waterfallColumns(from items: [ClipboardItem]) -> [[ClipboardItem]] {
@@ -1806,6 +1821,8 @@ struct ClipboardListView: View {
     }
 
     private func trackHistoryVisibility(_ itemID: UUID, isVisible: Bool) {
+        let isCurrentlyVisible = visibleHistoryItemIDs.contains(itemID)
+        guard isCurrentlyVisible != isVisible else { return }
         if isVisible {
             visibleHistoryItemIDs.insert(itemID)
         } else {
@@ -1814,6 +1831,8 @@ struct ClipboardListView: View {
     }
 
     private func trackSnippetVisibility(_ snippetID: UUID, isVisible: Bool) {
+        let isCurrentlyVisible = visibleSnippetItemIDs.contains(snippetID)
+        guard isCurrentlyVisible != isVisible else { return }
         if isVisible {
             visibleSnippetItemIDs.insert(snippetID)
         } else {
@@ -2115,16 +2134,11 @@ private struct CompactLinearHistoryRow: View {
     let onManageTags: () -> Void
     let onSaveAsSnippet: () -> Void
     let onTokenSelect: () -> Void
+    @State private var loadedPreviewImage: NSImage?
 
-    private var previewImage: NSImage? {
+    private var previewImageURL: URL? {
         guard item.isImageLikeItem, let url = item.contentURL else { return nil }
-        let key = url as NSURL
-        if let cached = ImagePreviewCache.shared.object(forKey: key) {
-            return cached
-        }
-        guard let image = NSImage(contentsOf: url) else { return nil }
-        ImagePreviewCache.shared.setObject(image, forKey: key)
-        return image
+        return url.standardizedFileURL
     }
 
     private var rowHorizontalPadding: CGFloat {
@@ -2165,8 +2179,8 @@ private struct CompactLinearHistoryRow: View {
 
     @ViewBuilder
     private var logo: some View {
-        if item.isImageLikeItem, let previewImage {
-            Image(nsImage: previewImage)
+        if item.isImageLikeItem, let loadedPreviewImage {
+            Image(nsImage: loadedPreviewImage)
                 .resizable()
                 .interpolation(.high)
                 .aspectRatio(contentMode: .fill)
@@ -2232,6 +2246,23 @@ private struct CompactLinearHistoryRow: View {
             }
             Divider()
             Button("删除", role: .destructive, action: onDelete)
+        }
+        .task(id: previewImageURL?.absoluteString) {
+            guard let previewImageURL else {
+                loadedPreviewImage = nil
+                return
+            }
+            if let cached = ClipboardImagePreviewLoader.cachedIconPreviewImage(for: previewImageURL) {
+                loadedPreviewImage = cached
+                return
+            }
+            loadedPreviewImage = nil
+            let image = await ClipboardImagePreviewLoader.loadIconPreviewImage(for: previewImageURL)
+            guard !Task.isCancelled else { return }
+            loadedPreviewImage = image
+        }
+        .onDisappear {
+            loadedPreviewImage = nil
         }
     }
 }
@@ -2336,6 +2367,7 @@ private struct CompactClipboardCard: View {
     let isSelected: Bool
     let quickShortcutLabel: String?
     @State private var isHovering = false
+    @State private var loadedPreviewImage: NSImage?
 
     private var accent: Color {
         if item.isImageLikeItem {
@@ -2348,15 +2380,9 @@ private struct CompactClipboardCard: View {
         }
     }
 
-    private var previewImage: NSImage? {
+    private var previewImageURL: URL? {
         guard item.isImageLikeItem, let url = item.contentURL else { return nil }
-        let key = url as NSURL
-        if let cached = ImagePreviewCache.shared.object(forKey: key) {
-            return cached
-        }
-        guard let image = NSImage(contentsOf: url) else { return nil }
-        ImagePreviewCache.shared.setObject(image, forKey: key)
-        return image
+        return url.standardizedFileURL
     }
 
     private var sourceAppIcon: NSImage? {
@@ -2458,6 +2484,23 @@ private struct CompactClipboardCard: View {
                 isHovering = hovering
             }
         }
+        .task(id: previewImageURL?.absoluteString) {
+            guard let previewImageURL else {
+                loadedPreviewImage = nil
+                return
+            }
+            if let cached = ClipboardImagePreviewLoader.cachedCardPreviewImage(for: previewImageURL) {
+                loadedPreviewImage = cached
+                return
+            }
+            loadedPreviewImage = nil
+            let image = await ClipboardImagePreviewLoader.loadCardPreviewImage(for: previewImageURL)
+            guard !Task.isCancelled else { return }
+            loadedPreviewImage = image
+        }
+        .onDisappear {
+            loadedPreviewImage = nil
+        }
     }
 
     private var imageCardBody: some View {
@@ -2513,8 +2556,8 @@ private struct CompactClipboardCard: View {
 
     @ViewBuilder
     private var imageCardBackground: some View {
-        if let previewImage {
-            Image(nsImage: previewImage)
+        if let loadedPreviewImage {
+            Image(nsImage: loadedPreviewImage)
                 .resizable()
                 .interpolation(.high)
                 .aspectRatio(contentMode: .fill)
@@ -2946,6 +2989,7 @@ private struct ClipboardCard: View {
     let quickShortcutLabel: String?
     @State private var isHovering = false
     @State private var isPressing = false
+    @State private var loadedPreviewImage: NSImage?
 
     init(
         item: ClipboardItem,
@@ -2986,15 +3030,9 @@ private struct ClipboardCard: View {
         }
     }
 
-    private var previewImage: NSImage? {
+    private var previewImageURL: URL? {
         guard item.isImageLikeItem, let url = item.contentURL else { return nil }
-        let key = url as NSURL
-        if let cached = ImagePreviewCache.shared.object(forKey: key) {
-            return cached
-        }
-        guard let image = NSImage(contentsOf: url) else { return nil }
-        ImagePreviewCache.shared.setObject(image, forKey: key)
-        return image
+        return url.standardizedFileURL
     }
 
     private var sourceAppIcon: NSImage? {
@@ -3036,8 +3074,8 @@ private struct ClipboardCard: View {
 
     @ViewBuilder
     private var nonCompactImageFillBackground: some View {
-        if let previewImage {
-            Image(nsImage: previewImage)
+        if let loadedPreviewImage {
+            Image(nsImage: loadedPreviewImage)
                 .resizable()
                 .interpolation(.high)
                 .aspectRatio(contentMode: .fill)
@@ -3307,6 +3345,23 @@ private struct ClipboardCard: View {
                 isPressing = pressing
             }
         }, perform: {})
+        .task(id: previewImageURL?.absoluteString) {
+            guard let previewImageURL else {
+                loadedPreviewImage = nil
+                return
+            }
+            if let cached = ClipboardImagePreviewLoader.cachedCardPreviewImage(for: previewImageURL) {
+                loadedPreviewImage = cached
+                return
+            }
+            loadedPreviewImage = nil
+            let image = await ClipboardImagePreviewLoader.loadCardPreviewImage(for: previewImageURL)
+            guard !Task.isCancelled else { return }
+            loadedPreviewImage = image
+        }
+        .onDisappear {
+            loadedPreviewImage = nil
+        }
     }
 }
 
@@ -3902,10 +3957,118 @@ private struct CardIconButtonStyle: ButtonStyle {
     }
 }
 
+private enum ClipboardImagePreviewLoader {
+    private static let cardThumbnailMaxPixelSize = 560
+    private static let iconThumbnailMaxPixelSize = 72
+
+    static func cachedCardPreviewImage(for url: URL) -> NSImage? {
+        cachedImage(for: url, cache: ImagePreviewCache.shared)
+    }
+
+    static func cachedIconPreviewImage(for url: URL) -> NSImage? {
+        cachedImage(for: url, cache: ImageIconPreviewCache.shared)
+    }
+
+    static func loadCardPreviewImage(for url: URL) async -> NSImage? {
+        await loadPreviewImage(
+            for: url,
+            maxPixelSize: cardThumbnailMaxPixelSize,
+            cache: ImagePreviewCache.shared
+        )
+    }
+
+    static func loadIconPreviewImage(for url: URL) async -> NSImage? {
+        await loadPreviewImage(
+            for: url,
+            maxPixelSize: iconThumbnailMaxPixelSize,
+            cache: ImageIconPreviewCache.shared
+        )
+    }
+
+    private static func cachedImage(
+        for url: URL,
+        cache: NSCache<NSURL, NSImage>
+    ) -> NSImage? {
+        let normalizedURL = url.standardizedFileURL
+        let key = normalizedURL as NSURL
+        return cache.object(forKey: key)
+    }
+
+    private static func loadPreviewImage(
+        for url: URL,
+        maxPixelSize: Int,
+        cache: NSCache<NSURL, NSImage>
+    ) async -> NSImage? {
+        let normalizedURL = url.standardizedFileURL
+        let key = normalizedURL as NSURL
+        if let cached = cache.object(forKey: key) {
+            return cached
+        }
+
+        let image = await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                let image = makeThumbnailImage(from: normalizedURL, maxPixelSize: maxPixelSize)
+                    ?? NSImage(contentsOf: normalizedURL)
+                continuation.resume(returning: image)
+            }
+        }
+
+        if let image {
+            cache.setObject(image, forKey: key, cost: memoryCost(of: image))
+        }
+        return image
+    }
+
+    private static func makeThumbnailImage(from url: URL, maxPixelSize: Int) -> NSImage? {
+        let sourceOptions: [CFString: Any] = [
+            kCGImageSourceShouldCache: false
+        ]
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, sourceOptions as CFDictionary) else {
+            return nil
+        }
+
+        let thumbnailOptions: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions as CFDictionary) else {
+            return nil
+        }
+        return NSImage(
+            cgImage: cgImage,
+            size: NSSize(width: cgImage.width, height: cgImage.height)
+        )
+    }
+
+    private static func memoryCost(of image: NSImage) -> Int {
+        if let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+            return max(cgImage.bytesPerRow * cgImage.height, 1)
+        }
+
+        if let bitmap = image.representations.compactMap({ $0 as? NSBitmapImageRep }).first {
+            return max(bitmap.bytesPerRow * bitmap.pixelsHigh, 1)
+        }
+
+        return 1
+    }
+}
+
 private enum ImagePreviewCache {
     static let shared: NSCache<NSURL, NSImage> = {
         let cache = NSCache<NSURL, NSImage>()
-        cache.countLimit = 120
+        cache.countLimit = 64
+        cache.totalCostLimit = 72 * 1024 * 1024
+        return cache
+    }()
+}
+
+private enum ImageIconPreviewCache {
+    static let shared: NSCache<NSURL, NSImage> = {
+        let cache = NSCache<NSURL, NSImage>()
+        cache.countLimit = 160
+        cache.totalCostLimit = 12 * 1024 * 1024
         return cache
     }()
 }
