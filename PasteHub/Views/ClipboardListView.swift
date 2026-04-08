@@ -554,6 +554,9 @@ struct ClipboardListView: View {
         .onReceive(NotificationCenter.default.publisher(for: .panelSelectionActivate)) { _ in
             activateSelectedItem()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .panelDeleteSelected)) { _ in
+            deleteSelectedItem()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .panelCommandModifierChanged)) { notification in
             guard let isPressed = notification.userInfo?["isPressed"] as? Bool else { return }
             isCommandModifierPressed = isPressed
@@ -1035,6 +1038,7 @@ struct ClipboardListView: View {
                                 selectedSnippetItemID = snippet.id
                                 activateSnippet(snippet)
                             },
+                            onSelect: { selectedSnippetItemID = snippet.id },
                             onCopy: { store.copySnippetToClipboard(snippet) },
                             onEdit: { beginEditSnippet(snippet) },
                             onDelete: { store.removeSnippet(snippet) },
@@ -1349,6 +1353,7 @@ struct ClipboardListView: View {
                                             selectedHistoryItemID = item.id
                                             activateClipboardItem(item)
                                         },
+                                        onSelect: { selectedHistoryItemID = item.id },
                                         onCopy: { store.copyToClipboard(item) },
                                         onDelete: { store.remove(item) },
                                         onManageTags: { tagEditorItem = item },
@@ -1358,6 +1363,7 @@ struct ClipboardListView: View {
                                         isSelected: selectedHistoryItemID == item.id,
                                         quickShortcutLabel: historyQuickLabelsByID[item.id]
                                     )
+                                    .id(item.id)
                                     .onAppear {
                                         trackHistoryVisibility(item.id, isVisible: true)
                                     }
@@ -1413,6 +1419,7 @@ struct ClipboardListView: View {
                             selectedHistoryItemID = item.id
                             activateClipboardItem(item)
                         },
+                        onSelect: { selectedHistoryItemID = item.id },
                         onCopy: { store.copyToClipboard(item) },
                         onDelete: { store.remove(item) },
                         onManageTags: { tagEditorItem = item },
@@ -1424,6 +1431,7 @@ struct ClipboardListView: View {
                         isSelected: selectedHistoryItemID == item.id,
                         quickShortcutLabel: historyQuickLabelsByID[item.id]
                     )
+                    .id(item.id)
                     .onAppear {
                         trackHistoryVisibility(item.id, isVisible: true)
                     }
@@ -1448,12 +1456,14 @@ struct ClipboardListView: View {
                                 selectedSnippetItemID = snippet.id
                                 activateSnippet(snippet)
                             },
+                            onSelect: { selectedSnippetItemID = snippet.id },
                             onCopy: { store.copySnippetToClipboard(snippet) },
                             onEdit: { beginEditSnippet(snippet) },
                             onDelete: { store.removeSnippet(snippet) },
                             isSelected: selectedSnippetItemID == snippet.id,
                             quickShortcutLabel: snippetQuickLabelsByID[snippet.id]
                         )
+                        .id(snippet.id)
                         .onAppear {
                             trackSnippetVisibility(snippet.id, isVisible: true)
                         }
@@ -1504,6 +1514,7 @@ struct ClipboardListView: View {
                             selectedSnippetItemID = snippet.id
                             activateSnippet(snippet)
                         },
+                        onSelect: { selectedSnippetItemID = snippet.id },
                         onCopy: { store.copySnippetToClipboard(snippet) },
                         onEdit: { beginEditSnippet(snippet) },
                         onDelete: { store.removeSnippet(snippet) },
@@ -1513,6 +1524,7 @@ struct ClipboardListView: View {
                         isSelected: selectedSnippetItemID == snippet.id,
                         quickShortcutLabel: snippetQuickLabelsByID[snippet.id]
                     )
+                    .id(snippet.id)
                     .onAppear {
                         trackSnippetVisibility(snippet.id, isVisible: true)
                     }
@@ -2018,6 +2030,25 @@ struct ClipboardListView: View {
         activateClipboardItem(item)
     }
 
+    private func deleteSelectedItem() {
+        if isSnippetMode {
+            guard let selectedSnippetItemID,
+                  let snippet = filteredSnippets.first(where: { $0.id == selectedSnippetItemID }) else {
+                return
+            }
+            store.removeSnippet(snippet)
+            self.selectedSnippetItemID = nil
+            return
+        }
+
+        guard let selectedHistoryItemID,
+              let item = filteredItems.first(where: { $0.id == selectedHistoryItemID }) else {
+            return
+        }
+        store.remove(item)
+        self.selectedHistoryItemID = nil
+    }
+
     private func quickSelectAndActivate(index: Int) {
         guard index >= 0 else { return }
         if isSnippetMode {
@@ -2442,7 +2473,6 @@ private struct CompactClipboardCard: View {
     let onTokenSelect: () -> Void
     let isSelected: Bool
     let quickShortcutLabel: String?
-    @State private var isHovering = false
     @State private var loadedPreviewImage: NSImage?
 
     private var accent: Color {
@@ -2555,11 +2585,6 @@ private struct CompactClipboardCard: View {
             Divider()
             Button("删除", role: .destructive, action: onDelete)
         }
-        .onHover { hovering in
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                isHovering = hovering
-            }
-        }
         .task(id: previewImageURL?.absoluteString) {
             guard let previewImageURL else {
                 loadedPreviewImage = nil
@@ -2619,22 +2644,10 @@ private struct CompactClipboardCard: View {
             .frame(width: cardWidth, height: imageCardSize)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(.ultraThinMaterial)
-                    .opacity(isHovering ? 1 : 0.85)
+                    .fill(Color(nsColor: .controlBackgroundColor))
             )
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(
-                        LinearGradient(
-                            colors: [Color.white.opacity(isHovering ? 0.28 : 0.18), Color.white.opacity(0.04)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
-                    )
-            )
-            .shadow(color: .black.opacity(isHovering ? 0.10 : 0.05), radius: isHovering ? 12 : 6, x: 0, y: isHovering ? 4 : 2)
+            .shadow(color: .black.opacity(0.06), radius: 4, x: 0, y: 1)
         }
         .buttonStyle(.plain)
     }
@@ -2659,17 +2672,28 @@ private struct CompactClipboardCard: View {
         }
     }
 
+    private var compactCardFooterText: String {
+        switch item.type {
+        case .text:
+            return "\(item.content.count) 个字符"
+        case .image:
+            return item.displayText
+        case .file:
+            return item.displayText
+        }
+    }
+
     private var regularCardBody: some View {
         Button(action: onPrimaryAction) {
             VStack(alignment: .leading, spacing: 0) {
-                // Colored header band
+                // Colored header band — full width
                 HStack(spacing: 0) {
-                    VStack(alignment: .leading, spacing: 1) {
+                    VStack(alignment: .leading, spacing: 2) {
                         Text(item.isImageLikeItem ? ClipboardContentType.image.label : item.type.label)
-                            .font(.system(size: helperFontSize + 1, weight: .bold, design: .rounded))
+                            .font(.system(size: helperFontSize + 2, weight: .bold, design: .rounded))
                         Text(ClipboardTimeFormatter.shared.string(from: item.timestamp))
-                            .font(.system(size: helperFontSize - 1, weight: .medium, design: .rounded))
-                            .opacity(0.8)
+                            .font(.system(size: helperFontSize, weight: .medium, design: .rounded))
+                            .opacity(0.85)
                     }
 
                     Spacer(minLength: 4)
@@ -2678,20 +2702,15 @@ private struct CompactClipboardCard: View {
                         Image(nsImage: sourceAppIcon)
                             .resizable()
                             .interpolation(.high)
-                            .frame(width: 20, height: 20)
-                            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-                            .shadow(color: .black.opacity(0.15), radius: 2, x: 0, y: 1)
+                            .frame(width: 24, height: 24)
+                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            .shadow(color: .black.opacity(0.18), radius: 2, x: 0, y: 1)
                     }
                 }
                 .foregroundStyle(.white)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(accent.gradient)
-                )
-                .padding(.horizontal, 3)
-                .padding(.top, 3)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(accent.gradient)
 
                 // Content body
                 VStack(alignment: .leading, spacing: 4) {
@@ -2701,31 +2720,26 @@ private struct CompactClipboardCard: View {
                         .multilineTextAlignment(.leading)
                         .lineLimit(textLineLimit)
                         .frame(maxWidth: .infinity, alignment: .leading)
-
-                    compactFooterRow(foreground: .secondary)
                 }
-                .padding(.horizontal, cardPadding)
-                .padding(.top, 6)
-                .padding(.bottom, cardPadding)
+                .padding(.horizontal, 8)
+                .padding(.top, 8)
+                .padding(.bottom, 4)
+
+                // Footer
+                Text(compactCardFooterText)
+                    .font(.system(size: helperFontSize, weight: .medium, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.bottom, 6)
             }
             .frame(width: cardWidth, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(.ultraThinMaterial)
-                    .opacity(isHovering ? 1 : 0.85)
+                    .fill(Color(nsColor: .controlBackgroundColor))
             )
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(
-                        LinearGradient(
-                            colors: [Color.white.opacity(isHovering ? 0.28 : 0.18), Color.white.opacity(0.04)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
-                    )
-            )
-            .shadow(color: .black.opacity(isHovering ? 0.10 : 0.05), radius: isHovering ? 12 : 6, x: 0, y: isHovering ? 4 : 2)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .shadow(color: .black.opacity(0.06), radius: 4, x: 0, y: 1)
         }
         .buttonStyle(.plain)
     }
@@ -2864,7 +2878,7 @@ private struct HorizontalWheelScrollView<Content: View>: NSViewRepresentable {
         let scrollView = WheelEnabledHorizontalScrollView()
         scrollView.drawsBackground = false
         scrollView.borderType = .noBorder
-        scrollView.hasHorizontalScroller = true
+        scrollView.hasHorizontalScroller = false
         scrollView.hasVerticalScroller = false
         scrollView.autohidesScrollers = true
         scrollView.scrollerStyle = .overlay
@@ -3094,15 +3108,15 @@ private struct ClipboardCard: View {
     let preferredWidth: CGFloat?
     let preferredHeight: CGFloat?
     let compactStyle: Bool
+    let onSelect: () -> Void
     let isSelected: Bool
     let quickShortcutLabel: String?
-    @State private var isHovering = false
-    @State private var isPressing = false
     @State private var loadedPreviewImage: NSImage?
 
     init(
         item: ClipboardItem,
         onPrimaryAction: @escaping () -> Void,
+        onSelect: @escaping () -> Void,
         onCopy: @escaping () -> Void,
         onDelete: @escaping () -> Void,
         onManageTags: @escaping () -> Void,
@@ -3116,6 +3130,7 @@ private struct ClipboardCard: View {
     ) {
         self.item = item
         self.onPrimaryAction = onPrimaryAction
+        self.onSelect = onSelect
         self.onCopy = onCopy
         self.onDelete = onDelete
         self.onManageTags = onManageTags
@@ -3288,27 +3303,10 @@ private struct ClipboardCard: View {
                 .frame(height: 80)
             }
             .overlay(alignment: .topLeading) {
-                HStack(alignment: .top, spacing: 8) {
-                    nonCompactImageMetaRow
-                        .shadow(color: .black.opacity(0.18), radius: 8, x: 0, y: 2)
-                    Spacer(minLength: 0)
-                    HStack(spacing: 6) {
-                        Button(action: onCopy) {
-                            Image(systemName: "doc.on.doc")
-                        }
-                        .buttonStyle(CardIconButtonStyle(tint: accent))
-
-                        Button(role: .destructive, action: onDelete) {
-                            Image(systemName: "trash")
-                        }
-                        .buttonStyle(CardIconButtonStyle(tint: .pink))
-                    }
-                    .opacity(isHovering ? 1 : 0)
-                    .shadow(color: .black.opacity(0.24), radius: 6, x: 0, y: 1)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 10)
-                .padding(.top, 9)
+                nonCompactImageMetaRow
+                    .shadow(color: .black.opacity(0.18), radius: 8, x: 0, y: 2)
+                    .padding(.horizontal, 10)
+                    .padding(.top, 9)
             }
             .overlay(alignment: .bottomLeading) {
                 nonCompactImageFooterRow
@@ -3318,34 +3316,33 @@ private struct ClipboardCard: View {
             }
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(.ultraThinMaterial)
-                .opacity(isHovering ? 1 : 0.85)
+                .fill(Color(nsColor: .controlBackgroundColor))
         )
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(
-                    LinearGradient(
-                        colors: [Color.white.opacity(isHovering ? 0.28 : 0.18), Color.white.opacity(0.04)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1
-                )
-        )
-        .shadow(color: .black.opacity(isHovering ? 0.10 : 0.05), radius: isHovering ? 12 : 6, x: 0, y: isHovering ? 4 : 2)
+        .shadow(color: .black.opacity(0.06), radius: 4, x: 0, y: 1)
+    }
+
+    private var cardFooterText: String {
+        switch item.type {
+        case .text:
+            return "\(item.content.count) 个字符"
+        case .image:
+            return item.displayText
+        case .file:
+            return item.displayText
+        }
     }
 
     private var standardCardContent: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Colored header band
+            // Colored header band — full width, top corners match card
             HStack(spacing: 0) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.isImageLikeItem ? ClipboardContentType.image.label : item.type.label)
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
                     Text(ClipboardTimeFormatter.shared.string(from: item.timestamp))
-                        .font(.system(size: 9, weight: .medium, design: .rounded))
-                        .opacity(0.8)
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .opacity(0.85)
                 }
 
                 Spacer(minLength: 4)
@@ -3354,31 +3351,27 @@ private struct ClipboardCard: View {
                     Image(nsImage: sourceAppIcon)
                         .resizable()
                         .interpolation(.high)
-                        .frame(width: 22, height: 22)
-                        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-                        .shadow(color: .black.opacity(0.15), radius: 2, x: 0, y: 1)
+                        .frame(width: 28, height: 28)
+                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .shadow(color: .black.opacity(0.18), radius: 3, x: 0, y: 1)
                 } else {
                     Image(systemName: item.isImageLikeItem ? ClipboardContentType.image.icon : item.type.icon)
-                        .font(.system(size: 14, weight: .semibold))
-                        .opacity(0.7)
+                        .font(.system(size: 18, weight: .semibold))
+                        .opacity(0.6)
                 }
             }
             .foregroundStyle(.white)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(accent.gradient)
-            )
-            .padding(.horizontal, 4)
-            .padding(.top, 4)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(accent.gradient)
 
             // Content body
             VStack(alignment: .leading, spacing: 6) {
                 Text(item.displayText)
                     .lineLimit(item.type == .text ? (compactStyle ? 3 : 5) : 2)
-                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
                     .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                 if !item.tags.isEmpty {
                     TagStripView(tags: item.tags, compactStyle: compactStyle)
@@ -3387,34 +3380,19 @@ private struct ClipboardCard: View {
                 if compactStyle {
                     Spacer(minLength: 0)
                 }
-
-                // Footer
-                HStack(spacing: 4) {
-                    if let app = item.sourceApp, !app.isEmpty {
-                        Text(app)
-                            .font(.system(size: 9, weight: .medium, design: .rounded))
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Spacer(minLength: 0)
-
-                    HStack(spacing: 6) {
-                        Button(action: onCopy) {
-                            Image(systemName: "doc.on.doc")
-                        }
-                        .buttonStyle(CardIconButtonStyle(tint: accent))
-
-                        Button(role: .destructive, action: onDelete) {
-                            Image(systemName: "trash")
-                        }
-                        .buttonStyle(CardIconButtonStyle(tint: .pink))
-                    }
-                    .opacity(isHovering ? 1 : 0)
-                }
             }
-            .padding(.horizontal, 8)
-            .padding(.top, 8)
+            .padding(.horizontal, 10)
+            .padding(.top, 10)
             .padding(.bottom, 6)
+
+            // Footer — centered metadata
+            Text(cardFooterText)
+                .font(.system(size: 11, weight: .medium, design: .rounded))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.horizontal, 10)
+                .padding(.bottom, 8)
         }
     }
 
@@ -3424,35 +3402,20 @@ private struct ClipboardCard: View {
                 fullBleedImageCardBody
             } else {
                 standardCardContent
-                    .padding(compactStyle ? 8 : 10)
                     .background(
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(.ultraThinMaterial)
-                            .opacity(isHovering ? 1 : 0.85)
+                            .fill(Color(nsColor: .controlBackgroundColor))
                     )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(
-                                LinearGradient(
-                                    colors: [Color.white.opacity(isHovering ? 0.28 : 0.18), Color.white.opacity(0.04)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ),
-                                lineWidth: 1
-                            )
-                    )
-                    .shadow(color: .black.opacity(isHovering ? 0.10 : 0.05), radius: isHovering ? 12 : 6, x: 0, y: isHovering ? 4 : 2)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .shadow(color: .black.opacity(0.06), radius: 4, x: 0, y: 1)
             }
         }
         .frame(maxWidth: usesFullBleedImageLayout && preferredWidth == nil ? .infinity : nil)
         .frame(width: preferredWidth, height: preferredHeight, alignment: .topLeading)
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.accentColor.opacity(isPressing ? 0.08 : 0))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(isSelected ? Color.accentColor : Color.clear, lineWidth: 2)
+                .allowsHitTesting(false)
         )
         .overlay(alignment: .topTrailing) {
             if let quickShortcutLabel {
@@ -3460,8 +3423,9 @@ private struct ClipboardCard: View {
                     .padding(8)
             }
         }
-        .scaleEffect(isPressing ? 0.985 : 1)
-        .onTapGesture(perform: onPrimaryAction)
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .onTapGesture(count: 2, perform: onPrimaryAction)
+        .onTapGesture(count: 1, perform: onSelect)
         .contextMenu {
             Button("完成键入", action: onPrimaryAction)
             Button("重新复制", action: onCopy)
@@ -3473,16 +3437,6 @@ private struct ClipboardCard: View {
             Divider()
             Button("删除", role: .destructive, action: onDelete)
         }
-        .onHover { hovering in
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                isHovering = hovering
-            }
-        }
-        .onLongPressGesture(minimumDuration: 0, maximumDistance: 14, pressing: { pressing in
-            withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
-                isPressing = pressing
-            }
-        }, perform: {})
         .task(id: previewImageURL?.absoluteString) {
             guard let previewImageURL else {
                 loadedPreviewImage = nil
@@ -3506,6 +3460,7 @@ private struct ClipboardCard: View {
 private struct SnippetCard: View {
     let snippet: SnippetItem
     let onPrimaryAction: () -> Void
+    let onSelect: () -> Void
     let onCopy: () -> Void
     let onEdit: () -> Void
     let onDelete: () -> Void
@@ -3515,12 +3470,10 @@ private struct SnippetCard: View {
     let compactDensity: CompactDensity
     let isSelected: Bool
     let quickShortcutLabel: String?
-    @State private var isHovering = false
-    @State private var isPressing = false
-
     init(
         snippet: SnippetItem,
         onPrimaryAction: @escaping () -> Void,
+        onSelect: @escaping () -> Void,
         onCopy: @escaping () -> Void,
         onEdit: @escaping () -> Void,
         onDelete: @escaping () -> Void,
@@ -3533,6 +3486,7 @@ private struct SnippetCard: View {
     ) {
         self.snippet = snippet
         self.onPrimaryAction = onPrimaryAction
+        self.onSelect = onSelect
         self.onCopy = onCopy
         self.onEdit = onEdit
         self.onDelete = onDelete
@@ -3636,27 +3590,6 @@ private struct SnippetCard: View {
                     Spacer(minLength: 0)
                 }
 
-                HStack(spacing: 4) {
-                    Spacer(minLength: 0)
-
-                    HStack(spacing: 6) {
-                        Button(action: onCopy) {
-                            Image(systemName: "doc.on.doc")
-                        }
-                        .buttonStyle(CardIconButtonStyle(tint: Color.accentColor))
-
-                        Button(action: onEdit) {
-                            Image(systemName: "pencil")
-                        }
-                        .buttonStyle(CardIconButtonStyle(tint: .orange))
-
-                        Button(role: .destructive, action: onDelete) {
-                            Image(systemName: "trash")
-                        }
-                        .buttonStyle(CardIconButtonStyle(tint: .pink))
-                    }
-                    .opacity(isHovering ? 1 : 0)
-                }
             }
             .padding(.horizontal, compactStyle ? compactPadding : 8)
             .padding(.top, 8)
@@ -3665,27 +3598,13 @@ private struct SnippetCard: View {
         .frame(width: preferredWidth, height: preferredHeight, alignment: .topLeading)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(.ultraThinMaterial)
-                .opacity(isHovering ? 1 : 0.85)
+                .fill(Color(nsColor: .controlBackgroundColor))
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(
-                    LinearGradient(
-                        colors: [Color.white.opacity(isHovering ? 0.28 : 0.18), Color.white.opacity(0.04)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1
-                )
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.accentColor.opacity(isPressing ? 0.08 : 0))
-        )
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(isSelected ? Color.accentColor : Color.clear, lineWidth: 2)
+                .allowsHitTesting(false)
         )
         .overlay(alignment: .topTrailing) {
             if let quickShortcutLabel {
@@ -3693,9 +3612,10 @@ private struct SnippetCard: View {
                     .padding(8)
             }
         }
-        .shadow(color: .black.opacity(isHovering ? 0.10 : 0.05), radius: isHovering ? 12 : 6, x: 0, y: isHovering ? 4 : 2)
-        .scaleEffect(isPressing ? 0.985 : 1)
-        .onTapGesture(perform: onPrimaryAction)
+        .shadow(color: .black.opacity(0.06), radius: 4, x: 0, y: 1)
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .onTapGesture(count: 2, perform: onPrimaryAction)
+        .onTapGesture(count: 1, perform: onSelect)
         .contextMenu {
             Button("完成键入", action: onPrimaryAction)
             Button("重新复制", action: onCopy)
@@ -3703,16 +3623,6 @@ private struct SnippetCard: View {
             Divider()
             Button("删除", role: .destructive, action: onDelete)
         }
-        .onHover { hovering in
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                isHovering = hovering
-            }
-        }
-        .onLongPressGesture(minimumDuration: 0, maximumDistance: 14, pressing: { pressing in
-            withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
-                isPressing = pressing
-            }
-        }, perform: {})
     }
 }
 

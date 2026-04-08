@@ -8,6 +8,7 @@ extension Notification.Name {
     static let panelSelectionActivate = Notification.Name("panelSelectionActivate")
     static let panelCommandModifierChanged = Notification.Name("panelCommandModifierChanged")
     static let panelQuickSelect = Notification.Name("panelQuickSelect")
+    static let panelDeleteSelected = Notification.Name("panelDeleteSelected")
 }
 
 final class FloatingPanel: NSPanel, NSWindowDelegate {
@@ -66,6 +67,12 @@ final class FloatingPanel: NSPanel, NSWindowDelegate {
         // Esc closes the panel
         if event.keyCode == 53 {
             hide()
+            return
+        }
+
+        // Delete or Backspace deletes selected item
+        if event.keyCode == 51 || event.keyCode == 117 {
+            NotificationCenter.default.post(name: .panelDeleteSelected, object: nil)
             return
         }
 
