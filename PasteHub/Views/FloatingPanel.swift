@@ -63,6 +63,12 @@ final class FloatingPanel: NSPanel, NSWindowDelegate {
     override var canBecomeMain: Bool { false }
 
     override func keyDown(with event: NSEvent) {
+        // Esc closes the panel
+        if event.keyCode == 53 {
+            hide()
+            return
+        }
+
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         if modifiers.contains(.command),
            let quickIndex = quickSelectIndex(from: event) {
