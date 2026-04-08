@@ -17,7 +17,7 @@ final class FloatingPanel: NSPanel, NSWindowDelegate {
     private static let quickSelectKeys: [Character] = Array("1234567890abcdefghijklmnopqrstuvwxyz")
     var onDidHide: (() -> Void)?
     var statusButtonProvider: (() -> NSStatusBarButton?)?
-    private let topBottomPanelHeight: CGFloat = 320
+    private let topBottomPanelHeight: CGFloat = 248
     private let sidePanelWidth: CGFloat = 520
     private let compactPanelWidth: CGFloat = CompactPanelLayout.width
     private let compactPanelMargin: CGFloat = CompactPanelLayout.margin
@@ -166,6 +166,7 @@ final class FloatingPanel: NSPanel, NSWindowDelegate {
     private func show() {
         guard let screen = targetScreenForShow() else { return }
         isPresented = true
+        configureContainerAppearance()
         let frames = placementFrames(for: settings.panelEdge, on: screen)
 
         if !isVisible {
@@ -387,7 +388,8 @@ final class FloatingPanel: NSPanel, NSWindowDelegate {
 
     private func configureContainerAppearance() {
         contentView?.wantsLayer = true
-        contentView?.layer?.cornerRadius = panelCornerRadius
+        let radius: CGFloat = settings.compactModeEnabled ? panelCornerRadius : 0
+        contentView?.layer?.cornerRadius = radius
         contentView?.layer?.masksToBounds = true
     }
 

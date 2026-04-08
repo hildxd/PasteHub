@@ -90,14 +90,17 @@ private struct SettingsPageHeader: View {
     let section: SettingsSection
 
     var body: some View {
-        HStack {
+        HStack(spacing: 12) {
+            Image(systemName: section.systemImage)
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(.secondary)
             Text(section.title)
-                .font(.system(size: 28, weight: .bold))
+                .font(.system(size: 28, weight: .bold, design: .rounded))
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 30)
-        .padding(.top, 18)
-        .padding(.bottom, 14)
+        .padding(.top, 20)
+        .padding(.bottom, 16)
     }
 }
 
@@ -155,8 +158,8 @@ private struct SettingsCard<Content: View>: View {
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                        }
                 }
+            }
 
             content
         }
@@ -165,12 +168,20 @@ private struct SettingsCard<Content: View>: View {
         .padding(.vertical, 18)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor))
+                .fill(.ultraThinMaterial)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color(nsColor: .separatorColor).opacity(0.35), lineWidth: 1)
+                .stroke(
+                    LinearGradient(
+                        colors: [Color.white.opacity(0.18), Color.white.opacity(0.05)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
+                )
         )
+        .shadow(color: .black.opacity(0.04), radius: 8, x: 0, y: 2)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -257,7 +268,13 @@ private struct SettingsHint: View {
 private struct SettingsSeparator: View {
     var body: some View {
         Rectangle()
-            .fill(Color(nsColor: .separatorColor).opacity(0.35))
+            .fill(
+                LinearGradient(
+                    colors: [Color.white.opacity(0.06), Color.white.opacity(0.12), Color.white.opacity(0.06)],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
             .frame(height: 1)
     }
 }
@@ -285,15 +302,16 @@ private struct CompactDensitySkeletonPicker: View {
                     .frame(width: 104)
                     .background(
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(Color(nsColor: .windowBackgroundColor))
+                            .fill(.ultraThinMaterial)
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
                             .stroke(
-                                selection == density ? Color.accentColor : Color(nsColor: .separatorColor).opacity(0.45),
+                                selection == density ? Color.accentColor : Color.white.opacity(0.12),
                                 lineWidth: selection == density ? 1.5 : 1
                             )
                     )
+                    .shadow(color: selection == density ? Color.accentColor.opacity(0.2) : .clear, radius: 6, x: 0, y: 2)
                 }
                 .buttonStyle(.plain)
             }
@@ -750,11 +768,12 @@ private struct ShortcutRow: View {
                 .padding(.vertical, 6)
                 .background(
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(Color.secondary.opacity(0.08))
+                        .fill(.ultraThinMaterial)
+                        .opacity(0.6)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .stroke(Color.secondary.opacity(0.16), lineWidth: 1)
+                        .stroke(Color.white.opacity(0.1), lineWidth: 1)
                 )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -980,11 +999,15 @@ private struct AboutFooterLink: View {
             .padding(.vertical, 5)
             .background(
                 Capsule()
-                    .fill(isHovering ? Color.accentColor.opacity(0.08) : .clear)
+                    .fill(isHovering ? Color.accentColor.opacity(0.1) : .clear)
+            )
+            .overlay(
+                Capsule()
+                    .stroke(isHovering ? Color.accentColor.opacity(0.2) : .clear, lineWidth: 1)
             )
             .contentShape(Capsule())
             .onHover { isHovering = $0 }
-            .animation(.easeOut(duration: 0.15), value: isHovering)
+            .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isHovering)
         }
         .buttonStyle(.plain)
     }
